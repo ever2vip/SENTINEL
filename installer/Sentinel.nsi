@@ -4,18 +4,30 @@ Unicode true
 !include "x64.nsh"
 !include "WinVer.nsh"
 
-!ifndef SOURCE_DIR
-  !error "SOURCE_DIR is required; use scripts/package.ps1 or pass an absolute source root."
+!ifndef STOP_HELPER
+  !error "STOP_HELPER is required; use scripts/package.ps1 to resolve the absolute helper path."
+!endif
+!ifndef PREPARE_HELPER
+  !error "PREPARE_HELPER is required; use scripts/package.ps1 to resolve the absolute helper path."
+!endif
+!ifndef CONFIGURE_HELPER
+  !error "CONFIGURE_HELPER is required; use scripts/package.ps1 to resolve the absolute helper path."
+!endif
+!ifndef REMOVE_HELPER
+  !error "REMOVE_HELPER is required; use scripts/package.ps1 to resolve the absolute helper path."
+!endif
+!ifndef INSTALLATION_DOC
+  !error "INSTALLATION_DOC is required; use scripts/package.ps1 to resolve the absolute documentation path."
 !endif
 
 !ifndef VERSION
   !define VERSION "1.0.0"
 !endif
 !ifndef PUBLISH_DIR
-  !define PUBLISH_DIR "../artifacts/publish"
+  !error "PUBLISH_DIR is required; use scripts/package.ps1 to resolve the absolute payload directory."
 !endif
 !ifndef OUTPUT_FILE
-  !define OUTPUT_FILE "../artifacts/SENTINEL-Setup-${VERSION}-win-x64.exe"
+  !error "OUTPUT_FILE is required; use scripts/package.ps1 to resolve the absolute output path."
 !endif
 
 Name "SENTINEL Enterprise ${VERSION}"
@@ -68,7 +80,7 @@ FunctionEnd
 
 !macro StopRunningSentinel PREFIX
   SetOutPath "$PLUGINSDIR"
-  File /oname=Stop-Sentinel.ps1 "${SOURCE_DIR}/installer/helpers/Stop-Sentinel.ps1"
+  File /oname=Stop-Sentinel.ps1 "${STOP_HELPER}"
   ${PREFIX}retry_stop:
     nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Stop-Sentinel.ps1" -InstallationDirectory "$INSTDIR"'
     Pop $0
@@ -86,7 +98,7 @@ Section "SENTINEL Desktop and Maintenance Service" SecCore
   SectionIn RO
   !insertmacro StopRunningSentinel "install_"
   SetOutPath "$PLUGINSDIR"
-  File /oname=Prepare-Sentinel.ps1 "${SOURCE_DIR}/installer/helpers/Prepare-Sentinel.ps1"
+  File /oname=Prepare-Sentinel.ps1 "${PREPARE_HELPER}"
   nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Prepare-Sentinel.ps1" -InstallationDirectory "$INSTDIR"'
   Pop $0
   Pop $1
@@ -104,18 +116,18 @@ Section "SENTINEL Desktop and Maintenance Service" SecCore
     Abort
   ${EndIf}
   SetOutPath "$INSTDIR\Desktop"
-  File /r "${PUBLISH_DIR}/Desktop/*"
+  File /r "${PUBLISH_DIR}\Desktop\*"
   SetOutPath "$INSTDIR\Service"
-  File /r "${PUBLISH_DIR}/Service/*"
+  File /r "${PUBLISH_DIR}\Service\*"
   SetOutPath "$INSTDIR"
-  File /oname=INSTALLATION.md "${SOURCE_DIR}/docs/INSTALLATION.md"
+  File /oname=INSTALLATION.md "${INSTALLATION_DOC}"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKLM "Software\SENTINEL" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SENTINEL" "DisplayName" "SENTINEL Enterprise (Setup incomplete)"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SENTINEL" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SENTINEL" "QuietUninstallString" '$\"$INSTDIR\Uninstall.exe$\" /S'
   SetOutPath "$PLUGINSDIR"
-  File /oname=Configure-Sentinel.ps1 "${SOURCE_DIR}/installer/helpers/Configure-Sentinel.ps1"
+  File /oname=Configure-Sentinel.ps1 "${CONFIGURE_HELPER}"
   nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Configure-Sentinel.ps1" -InstallationDirectory "$INSTDIR"'
   Pop $0
   Pop $1
@@ -155,7 +167,7 @@ SectionEnd
 Section "Uninstall"
   !insertmacro StopRunningSentinel "uninstall_"
   SetOutPath "$PLUGINSDIR"
-  File /oname=Remove-SentinelService.ps1 "${SOURCE_DIR}/installer/helpers/Remove-SentinelService.ps1"
+  File /oname=Remove-SentinelService.ps1 "${REMOVE_HELPER}"
   nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Remove-SentinelService.ps1"'
   Pop $0
   Pop $1
