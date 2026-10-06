@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Sentinel.Core/Sentinel.Core.csproj" />
+  </ItemGroup>
+</Project>

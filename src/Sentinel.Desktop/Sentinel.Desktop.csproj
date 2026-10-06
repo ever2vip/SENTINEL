@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>Sentinel.Desktop</AssemblyName>
+    <RootNamespace>Sentinel.Desktop</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/Sentinel.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Sentinel.Core/Sentinel.Core.csproj" />
+    <ProjectReference Include="../Sentinel.Infrastructure/Sentinel.Infrastructure.csproj" />
+    <ProjectReference Include="../Sentinel.Engines/Sentinel.Engines.csproj" />
+  </ItemGroup>
+</Project>

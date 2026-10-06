@@ -1,0 +1,4 @@
+{
+  "enableServiceLogRetention": false,
+  "serviceLogRetentionDays": 30
+}
