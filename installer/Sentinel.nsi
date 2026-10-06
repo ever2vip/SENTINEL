@@ -113,6 +113,7 @@ FunctionEnd
   ClearErrors
   FileOpen $2 "$TEMP\SENTINEL-Setup.log" a
   ${IfNot} ${Errors}
+    FileSeek $2 0 END
     FileWrite $2 "Helper=${HELPER}$\r$\n"
     FileWrite $2 "InstallationDirectory=$INSTDIR$\r$\n"
     FileWrite $2 "PowerShell=${NATIVE_POWERSHELL}$\r$\n"

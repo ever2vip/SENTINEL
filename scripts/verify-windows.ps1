@@ -73,7 +73,13 @@ try {
                 if (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::Write) -ne 0) { throw 'Ordinary Users can write service state.' }
             }
             if (@($logsAcl.Access | Where-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-32-545' }).Count -ne 0) { throw 'Service logs are readable by ordinary Users.' }
-            & icacls.exe $state $logs | Set-Content (Join-Path $EvidenceDirectory 'service-acls.txt')
+            $aclEvidence = foreach ($directory in @($state, $logs)) {
+                # icacls accepts one directory per invocation; check both absolute paths separately.
+                $output = & icacls.exe $directory 2>&1
+                if ($LASTEXITCODE -ne 0) { throw "Could not inspect service ACLs for '$directory' (icacls exit $LASTEXITCODE)." }
+                $output
+            }
+            $aclEvidence | Set-Content (Join-Path $EvidenceDirectory 'service-acls.txt')
         }
         Check 'start-menu-and-uninstall' {
             if (-not (Test-Path (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\SENTINEL\SENTINEL Enterprise.lnk'))) { throw 'Start Menu shortcut missing.' }
