@@ -46,7 +46,14 @@ $nsisRoot = Split-Path $compilerPath -Parent
 # Check the installed NSIS includes, Unicode plugins, and standard MUI resources used by this script.
 $nsisInputs = @(
     'Include/MUI2.nsh', 'Include/LogicLib.nsh', 'Include/x64.nsh', 'Include/WinVer.nsh',
-    'Contrib/Modern UI 2/MUI2.nsh',
+    'Include/WinMessages.nsh', 'Include/nsDialogs.nsh', 'Include/LangFile.nsh', 'Include/Util.nsh',
+    'Contrib/Modern UI 2/MUI2.nsh', 'Contrib/Modern UI 2/Deprecated.nsh',
+    'Contrib/Modern UI 2/Interface.nsh', 'Contrib/Modern UI 2/Localization.nsh', 'Contrib/Modern UI 2/Pages.nsh',
+    'Contrib/Modern UI 2/Pages/Components.nsh', 'Contrib/Modern UI 2/Pages/Directory.nsh',
+    'Contrib/Modern UI 2/Pages/Finish.nsh', 'Contrib/Modern UI 2/Pages/InstallFiles.nsh',
+    'Contrib/Modern UI 2/Pages/License.nsh', 'Contrib/Modern UI 2/Pages/StartMenu.nsh',
+    'Contrib/Modern UI 2/Pages/UninstallConfirm.nsh', 'Contrib/Modern UI 2/Pages/Welcome.nsh',
+    'Contrib/Language files/English.nlf', 'Contrib/Language files/English.nsh',
     'Plugins/x86-unicode/nsExec.dll', 'Plugins/x86-unicode/nsDialogs.dll',
     'Contrib/UIs/modern.exe',
     'Contrib/Graphics/Icons/modern-install.ico', 'Contrib/Graphics/Icons/modern-uninstall.ico',
