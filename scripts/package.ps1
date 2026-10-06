@@ -41,6 +41,7 @@ if (-not [IO.Path]::IsPathRooted($Makensis) -and ($Makensis.Contains('/') -or $M
 try { $compiler = Get-Command -Name $Makensis -CommandType Application -ErrorAction Stop | Select-Object -First 1 }
 catch { throw "NSIS compiler '$Makensis' is unavailable. Install NSIS or pass -Makensis with its absolute executable path." }
 $compilerPath = Resolve-InstallerFile $compiler.Source 'NSIS compiler'
+$nativePowerShell = Resolve-InstallerFile (Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe') 'Native Windows PowerShell helper host'
 $nsisRoot = Split-Path $compilerPath -Parent
 # Check the installed NSIS includes, Unicode plugins, and standard MUI resources used by this script.
 $nsisInputs = @(
@@ -91,7 +92,7 @@ try {
         $files += $componentFiles
     }
     # Recheck every selected file immediately before invoking NSIS, including all recursively bundled payload files.
-    foreach ($dependency in @($installerInputs.Values) + @($compilerPath) + $nsisDependencies + @($files.FullName)) {
+    foreach ($dependency in @($installerInputs.Values) + @($compilerPath, $nativePowerShell) + $nsisDependencies + @($files.FullName)) {
         if (-not (Test-Path -LiteralPath $dependency -PathType Leaf)) {
             throw "Missing installer dependency before NSIS invocation: $dependency"
         }

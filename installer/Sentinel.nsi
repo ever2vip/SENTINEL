@@ -3,6 +3,17 @@ Unicode true
 !include "LogicLib.nsh"
 !include "x64.nsh"
 !include "WinVer.nsh"
+; This x86 NSIS bootstrapper must launch native 64-bit PowerShell explicitly.
+; Do not rely on thread-local WOW64 redirection state inherited from .onInit.
+!define NATIVE_POWERSHELL "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+
+!macro VerifyNativePowerShell
+  ${IfNot} ${FileExists} "${NATIVE_POWERSHELL}"
+    MessageBox MB_ICONSTOP "Native 64-bit Windows PowerShell is unavailable. Repair Windows PowerShell before running SENTINEL Setup." /SD IDOK
+    SetErrorLevel 16
+    Abort
+  ${EndIf}
+!macroend
 
 !ifndef STOP_HELPER
   !error "STOP_HELPER is required; use scripts/package.ps1 to resolve the absolute helper path."
@@ -65,14 +76,14 @@ Function .onInit
     MessageBox MB_ICONSTOP "SENTINEL requires Windows 10/11 x64."
     Abort
   ${EndIf}
-  ${DisableX64FSRedirection}
+  !insertmacro VerifyNativePowerShell
   SetRegView 64
   SetShellVarContext all
   InitPluginsDir
 FunctionEnd
 
 Function un.onInit
-  ${DisableX64FSRedirection}
+  !insertmacro VerifyNativePowerShell
   SetRegView 64
   SetShellVarContext all
   InitPluginsDir
@@ -82,7 +93,7 @@ FunctionEnd
   SetOutPath "$PLUGINSDIR"
   File /oname=Stop-Sentinel.ps1 "${STOP_HELPER}"
   ${PREFIX}retry_stop:
-    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Stop-Sentinel.ps1" -InstallationDirectory "$INSTDIR"'
+    nsExec::ExecToStack '"${NATIVE_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Stop-Sentinel.ps1" -InstallationDirectory "$INSTDIR"'
     Pop $0
     Pop $1
     ${If} $0 != 0
@@ -99,7 +110,7 @@ Section "SENTINEL Desktop and Maintenance Service" SecCore
   !insertmacro StopRunningSentinel "install_"
   SetOutPath "$PLUGINSDIR"
   File /oname=Prepare-Sentinel.ps1 "${PREPARE_HELPER}"
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Prepare-Sentinel.ps1" -InstallationDirectory "$INSTDIR"'
+  nsExec::ExecToStack '"${NATIVE_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Prepare-Sentinel.ps1" -InstallationDirectory "$INSTDIR"'
   Pop $0
   Pop $1
   ${If} $0 != 0
@@ -128,7 +139,7 @@ Section "SENTINEL Desktop and Maintenance Service" SecCore
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SENTINEL" "QuietUninstallString" '$\"$INSTDIR\Uninstall.exe$\" /S'
   SetOutPath "$PLUGINSDIR"
   File /oname=Configure-Sentinel.ps1 "${CONFIGURE_HELPER}"
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Configure-Sentinel.ps1" -InstallationDirectory "$INSTDIR"'
+  nsExec::ExecToStack '"${NATIVE_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Configure-Sentinel.ps1" -InstallationDirectory "$INSTDIR"'
   Pop $0
   Pop $1
   ${If} $0 != 0
@@ -168,7 +179,7 @@ Section "Uninstall"
   !insertmacro StopRunningSentinel "uninstall_"
   SetOutPath "$PLUGINSDIR"
   File /oname=Remove-SentinelService.ps1 "${REMOVE_HELPER}"
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Remove-SentinelService.ps1"'
+  nsExec::ExecToStack '"${NATIVE_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Remove-SentinelService.ps1"'
   Pop $0
   Pop $1
   ${If} $0 != 0
