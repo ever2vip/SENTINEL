@@ -78,7 +78,23 @@ jobs:
           try {
             $setup = Join-Path $PWD 'release/SENTINEL-Enterprise-V1.0/SENTINEL-Enterprise-V1.0-Setup-x64.exe'
             ./scripts/verify-windows.ps1 -SetupPath $setup -InstallUninstall -DesktopSmoke
-          } finally { Stop-Transcript }
+          } finally {
+            try {
+              $setupLog = Join-Path $env:TEMP 'SENTINEL-Setup.log'
+              if (Test-Path -LiteralPath $setupLog -PathType Leaf) {
+                Copy-Item -LiteralPath $setupLog -Destination (Join-Path $env:GITHUB_WORKSPACE 'artifacts/qa/SENTINEL-Setup.log') -ErrorAction Stop
+                Write-Host "Installer helper diagnostics: $setupLog"
+                Get-Content -LiteralPath $setupLog -ErrorAction Stop | ForEach-Object { Write-Host $_ }
+              } else {
+                Write-Host "Installer helper diagnostic log was not created: $setupLog"
+              }
+            } catch {
+              Write-Warning "Could not collect installer diagnostics: $($_.Exception.Message)" -WarningAction Continue
+            } finally {
+              try { Stop-Transcript -ErrorAction Stop }
+              catch { Write-Warning "Could not stop diagnostic transcript: $($_.Exception.Message)" -WarningAction Continue }
+            }
+          }
       - name: Prepare distributables and verify ZIP contents
         shell: pwsh
         run: |

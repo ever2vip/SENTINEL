@@ -89,6 +89,32 @@ Function un.onInit
   InitPluginsDir
 FunctionEnd
 
+!macro LogHelperResult HELPER
+  ; Diagnostics must preserve helper results, scratch registers, and the error flag.
+  Push $2
+  Push $3
+  StrCpy $3 0
+  IfErrors 0 +2
+    StrCpy $3 1
+  ClearErrors
+  FileOpen $2 "$TEMP\SENTINEL-Setup.log" a
+  ${IfNot} ${Errors}
+    FileWrite $2 "Helper=${HELPER}$\r$\n"
+    FileWrite $2 "InstallationDirectory=$INSTDIR$\r$\n"
+    FileWrite $2 "PowerShell=${NATIVE_POWERSHELL}$\r$\n"
+    FileWrite $2 "Exit=$0$\r$\n"
+    FileWrite $2 "Output=$1$\r$\n$\r$\n"
+    FileClose $2
+  ${EndIf}
+  ${If} $3 == 1
+    SetErrors
+  ${Else}
+    ClearErrors
+  ${EndIf}
+  Pop $3
+  Pop $2
+!macroend
+
 !macro StopRunningSentinel PREFIX
   SetOutPath "$PLUGINSDIR"
   File /oname=Stop-Sentinel.ps1 "${STOP_HELPER}"
@@ -96,6 +122,7 @@ FunctionEnd
     nsExec::ExecToStack '"${NATIVE_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Stop-Sentinel.ps1" -InstallationDirectory "$INSTDIR"'
     Pop $0
     Pop $1
+    !insertmacro LogHelperResult "Stop-Sentinel.ps1"
     ${If} $0 != 0
       IfSilent ${PREFIX}abort_stop
       MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$1" IDRETRY ${PREFIX}retry_stop
@@ -113,6 +140,7 @@ Section "SENTINEL Desktop and Maintenance Service" SecCore
   nsExec::ExecToStack '"${NATIVE_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Prepare-Sentinel.ps1" -InstallationDirectory "$INSTDIR"'
   Pop $0
   Pop $1
+  !insertmacro LogHelperResult "Prepare-Sentinel.ps1"
   ${If} $0 != 0
     MessageBox MB_ICONSTOP "$1" /SD IDOK
     SetErrorLevel 14
@@ -142,6 +170,7 @@ Section "SENTINEL Desktop and Maintenance Service" SecCore
   nsExec::ExecToStack '"${NATIVE_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Configure-Sentinel.ps1" -InstallationDirectory "$INSTDIR"'
   Pop $0
   Pop $1
+  !insertmacro LogHelperResult "Configure-Sentinel.ps1"
   ${If} $0 != 0
     DetailPrint "$1"
     MessageBox MB_ICONSTOP "$1$\r$\nSetup could not complete. Repair by running Setup again with administrator access." /SD IDOK
@@ -182,6 +211,7 @@ Section "Uninstall"
   nsExec::ExecToStack '"${NATIVE_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Remove-SentinelService.ps1"'
   Pop $0
   Pop $1
+  !insertmacro LogHelperResult "Remove-SentinelService.ps1"
   ${If} $0 != 0
     MessageBox MB_ICONSTOP "$1" /SD IDOK
     SetErrorLevel 13
