@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>Sentinel.Cli</AssemblyName></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Sentinel.Core/Sentinel.Core.csproj" />
+    <ProjectReference Include="../Sentinel.Infrastructure/Sentinel.Infrastructure.csproj" />
+    <ProjectReference Include="../Sentinel.Engines/Sentinel.Engines.csproj" />
+  </ItemGroup>
+</Project>

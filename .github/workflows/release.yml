@@ -1,0 +1,292 @@
+name: SENTINEL Enterprise V1.0 release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v1.0.0']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sentinel-v1-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-release-gate:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.401'
+      - name: Locate NSIS
+        shell: pwsh
+        run: |
+          $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (-not (Test-Path -LiteralPath $makensis)) {
+            choco install nsis --version=3.11 -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed.' }
+          }
+          if (-not (Test-Path -LiteralPath $makensis)) { throw 'makensis.exe is unavailable.' }
+          "SENTINEL_MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Build Release, run product tests, publish self-contained x64 applications and package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts/qa -Force | Out-Null
+          Start-Transcript -Path artifacts/qa/package.log
+          try {
+            ./scripts/package.ps1 -Version '1.0.0' -Configuration Release -Makensis $env:SENTINEL_MAKENSIS
+          } finally { Stop-Transcript }
+      - name: Run engine regression tests
+        shell: pwsh
+        run: |
+          Start-Transcript -Path artifacts/qa/engine-tests.log
+          try {
+            dotnet run --project tests/Sentinel.EngineTests/Sentinel.EngineTests.csproj --no-build -c Release
+            if ($LASTEXITCODE -ne 0) { throw "Engine regression tests failed with exit code $LASTEXITCODE." }
+          } finally { Stop-Transcript }
+      - name: Installer, desktop first launch, service, upgrade and uninstall smoke tests
+        shell: pwsh
+        run: |
+          Start-Transcript -Path artifacts/qa/windows-smoke.log
+          try {
+            $setup = Join-Path $PWD 'release/SENTINEL-Enterprise-V1.0/SENTINEL-Enterprise-V1.0-Setup-x64.exe'
+            ./scripts/verify-windows.ps1 -SetupPath $setup -InstallUninstall -DesktopSmoke
+          } finally { Stop-Transcript }
+      - name: Prepare distributables and verify ZIP contents
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $distribution = Join-Path $PWD 'artifacts/distribution/SENTINEL-Enterprise-V1.0'
+          $package = Join-Path $PWD 'release/SENTINEL-Enterprise-V1.0'
+          New-Item -ItemType Directory -Path $distribution -Force | Out-Null
+          $exeName = 'SENTINEL-Enterprise-V1.0-Setup-x64.exe'
+          $zipName = 'SENTINEL-Enterprise-V1.0-Installer.zip'
+          $exe = Join-Path $distribution $exeName
+          Copy-Item -LiteralPath (Join-Path $package $exeName) -Destination $exe
+          $exeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $exeSize = (Get-Item -LiteralPath $exe).Length
+          $readme = @"
+          SENTINEL Enterprise V1.0 - unsigned Windows 10/11 x64 testing installer
+
+          INSTALLER: $exeName
+          SIZE: $exeSize bytes
+          SHA-256: $exeHash
+          SOURCE COMMIT: $env:GITHUB_SHA
+
+          Download the EXE, double-click Setup, and approve the administrator/UAC request.
+          Launch SENTINEL Enterprise from the Start Menu and select Demo Organization.
+          The synthetic demo works offline and requires no company network.
+
+          Setup includes the desktop application, least-privilege maintenance service,
+          self-contained .NET/WPF runtime, native SQLite, shortcuts, and uninstaller.
+          Visual Studio, source code, Docker, Node.js, an external database server,
+          and a separately installed .NET runtime are not required.
+
+          The CI Release build, product tests, engine tests, and automated Windows
+          installer/service/first-launch/upgrade/uninstall smoke gate passed.
+          Interactive acceptance on Windows 10 and Windows 11 remains required,
+          including post-install Demo Organization, all navigation, themes, reports,
+          settings, authorized target handling, and scan cancellation.
+          This unsigned testing prerelease is not a fully accepted production release.
+          The maintenance service does not autonomously scan networks.
+
+          This package was built in GitHub Actions. Byte-for-byte reproducibility
+          against an earlier installer is not guaranteed; use this package's hashes.
+          Uninstall preserves operator evidence in LocalAppData/Sentinel and service
+          audit files in ProgramData/Sentinel.
+          "@
+          Set-Content -LiteralPath (Join-Path $distribution 'README.txt') -Value $readme -Encoding utf8
+          $checksums = Join-Path $distribution 'SHA256SUMS.txt'
+          Set-Content -LiteralPath $checksums -Value "$exeHash  $exeName" -Encoding ascii
+          $zip = Join-Path $distribution $zipName
+          Compress-Archive -LiteralPath @($exe, (Join-Path $distribution 'README.txt'), $checksums) -DestinationPath $zip
+          $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+          try {
+            $expected = @($exeName, 'README.txt', 'SHA256SUMS.txt') | Sort-Object
+            $actual = @($archive.Entries | ForEach-Object FullName) | Sort-Object
+            if (@(Compare-Object $expected $actual).Count -ne 0) { throw 'ZIP contains unexpected or missing files.' }
+            $entry = $archive.GetEntry($exeName)
+            $stream = $entry.Open()
+            $algorithm = [Security.Cryptography.SHA256]::Create()
+            try {
+              $embeddedHash = [Convert]::ToHexString($algorithm.ComputeHash($stream)).ToLowerInvariant()
+            } finally { $algorithm.Dispose(); $stream.Dispose() }
+            if ($embeddedHash -ne $exeHash) { throw 'ZIP installer hash does not match the standalone installer.' }
+          } finally { $archive.Dispose() }
+          $zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          # The ZIP checksum file covers its installer; the external file covers both binaries.
+          Add-Content -LiteralPath $checksums -Value "$zipHash  $zipName" -Encoding ascii
+          Copy-Item -LiteralPath (Join-Path $package 'release-manifest.json') -Destination $distribution
+          Copy-Item -LiteralPath 'artifacts/windows-verification/verification-results.json' -Destination $distribution
+          @"
+          ## SENTINEL Enterprise V1.0 distributables
+          | File | Bytes | SHA-256 |
+          | --- | ---: | --- |
+          | $exeName | $exeSize | $exeHash |
+          | $zipName | $((Get-Item -LiteralPath $zip).Length) | $zipHash |
+
+          Download SENTINEL-Enterprise-V1.0-Windows-x64 from this run's Artifacts section.
+          A successful v1.0.0 tag run also publishes and verifies GitHub Release assets.
+          This CI build is unsigned and still requires interactive Windows acceptance.
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+      - name: Upload installer and distribution ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: SENTINEL-Enterprise-V1.0-Windows-x64
+          path: artifacts/distribution/SENTINEL-Enterprise-V1.0/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload QA logs and evidence, including failed checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SENTINEL-Enterprise-V1.0-QA
+          path: |
+            artifacts/qa/
+            artifacts/windows-verification/
+          if-no-files-found: warn
+          retention-days: 30
+
+  publish-release:
+    if: github.event_name == 'push' && github.ref == 'refs/tags/v1.0.0'
+    needs: windows-release-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: SENTINEL-Enterprise-V1.0-Windows-x64
+          path: distribution
+      - name: Upload, verify downloaded assets, then publish the testing prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SENTINEL_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import tempfile
+
+          repository = os.environ['GH_REPO']
+          tag = 'v1.0.0'
+          title = 'SENTINEL Enterprise V1.0'
+          directory = pathlib.Path('distribution')
+          exe = 'SENTINEL-Enterprise-V1.0-Setup-x64.exe'
+          archive = 'SENTINEL-Enterprise-V1.0-Installer.zip'
+          files = [exe, archive, 'README.txt', 'SHA256SUMS.txt',
+                   'release-manifest.json', 'verification-results.json']
+
+          def invoke(*arguments):
+              result = subprocess.run(['gh', *arguments], capture_output=True, text=True)
+              if result.returncode:
+                  raise RuntimeError('GitHub operation failed: ' + ' '.join(arguments[:2])
+                                     + '; ' + result.stderr.strip())
+              return result.stdout
+
+          def api(endpoint):
+              return json.loads(invoke('api', endpoint))
+
+          def release_for_tag():
+              # Listing with write access also finds drafts left by an interrupted upload.
+              pages = json.loads(invoke('api', '--paginate', '--slurp',
+                                        f'repos/{repository}/releases?per_page=100'))
+              matches = [release for page in pages for release in page if release['tag_name'] == tag]
+              if len(matches) > 1:
+                  raise RuntimeError('Multiple releases use this tag; resolve them before publication.')
+              return matches[0] if matches else None
+
+          def digest(path):
+              value = hashlib.sha256()
+              with path.open('rb') as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                      value.update(chunk)
+              return value.hexdigest()
+
+          expected = {}
+          for name in files:
+              path = directory / name
+              if not path.is_file():
+                  raise RuntimeError('Missing distribution file: ' + name)
+              expected[name] = digest(path)
+          declared = {}
+          for line in (directory / 'SHA256SUMS.txt').read_text(encoding='ascii').splitlines():
+              checksum, name = line.split('  ', 1)
+              declared[name] = checksum
+          if declared != {name: expected[name] for name in [exe, archive]}:
+              raise RuntimeError('Distribution checksum declarations do not match both binaries.')
+          manifest = json.loads((directory / 'release-manifest.json').read_text(encoding='utf-8-sig'))
+          if manifest['sourceCommit'] != os.environ['SENTINEL_SOURCE_COMMIT']:
+              raise RuntimeError('Manifest does not identify the commit built by this tag run.')
+          reference = api(f'repos/{repository}/git/ref/tags/{tag}')['object']
+          while reference['type'] == 'tag':
+              reference = api(f'repos/{repository}/git/tags/{reference["sha"]}')['object']
+          if reference['type'] != 'commit' or reference['sha'] != os.environ['SENTINEL_SOURCE_COMMIT']:
+              raise RuntimeError('The release tag moved after the build; refusing publication.')
+
+          release = release_for_tag()
+          notes = pathlib.Path('release-notes.md')
+          notes.write_text('SENTINEL Enterprise V1.0 unsigned Windows 10/11 x64 testing installer.\n\n'
+                           'The Release build, product tests, engine tests, and automated Windows '
+                           'install/service/desktop-first-launch/upgrade/uninstall smoke gate passed. '
+                           'Interactive Windows 10/11 acceptance, including post-install Demo Organization '
+                           'and themes, remains required. This prerelease is not a fully accepted production release.\n\n'
+                           'The installer is self-contained; Visual Studio and source code are not required. '
+                           'Download the EXE directly or unpack the Installer ZIP.\n\n'
+                           'This GitHub Actions build is not promised to reproduce the bytes of an earlier '
+                           'installer. Both Release binaries were downloaded and verified against the attached '
+                           'SHA256SUMS.txt before publication. See the Actions QA artifact for validation evidence.\n',
+                           encoding='utf-8')
+          if release is None:
+              # Keep incomplete uploads private until all downloaded asset hashes pass.
+              invoke('release', 'create', tag, '--verify-tag', '--draft', '--prerelease',
+                     '--title', title, '--notes-file', str(notes))
+              release = release_for_tag()
+              if release is None:
+                  raise RuntimeError('Created draft release is unavailable; refusing publication.')
+          elif release['name'] != title or not release['prerelease']:
+              raise RuntimeError('An existing release has different metadata; refusing to modify it.')
+
+          assets = {asset['name']: asset for asset in release['assets']}
+          with tempfile.TemporaryDirectory() as temporary:
+              downloads = pathlib.Path(temporary)
+              # Compare all existing assets first, so mismatches cannot partially update a release.
+              for name in files:
+                  if name in assets:
+                      invoke('release', 'download', tag, '--pattern', name, '--dir', str(downloads))
+                      if digest(downloads / name) != expected[name]:
+                          raise RuntimeError('Existing Release asset has different bytes: ' + name
+                                             + '. Nothing was overwritten; use a new version for a new build.')
+              for name in files:
+                  if name not in assets:
+                      invoke('release', 'upload', tag, str(directory / name))
+                      invoke('release', 'download', tag, '--pattern', name, '--dir', str(downloads))
+                      if digest(downloads / name) != expected[name]:
+                          raise RuntimeError('Downloaded Release asset checksum mismatch: ' + name)
+          if release['draft']:
+              invoke('release', 'edit', tag, '--draft=false', '--prerelease',
+                     '--title', title, '--notes-file', str(notes))
+          published = api(f'repos/{repository}/releases/{release["id"]}')
+          if published['draft'] or not published['prerelease']:
+              raise RuntimeError('Release did not enter the expected published prerelease state.')
+          published_assets = {asset['name']: asset for asset in published['assets']}
+          lines = ['## Verified SENTINEL Enterprise V1.0 Release', '', published['html_url'], '']
+          for name in [exe, archive]:
+              if name not in published_assets:
+                  raise RuntimeError('Published Release is missing a verified binary: ' + name)
+              lines.extend([f'**{name}**', published_assets[name]['browser_download_url'],
+                            f'SHA-256: {expected[name]}', ''])
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
+              summary.write('\n'.join(lines))
+          print('Release assets downloaded and SHA-256 verified; testing prerelease published.')
+          print(published['html_url'])
+          PY
