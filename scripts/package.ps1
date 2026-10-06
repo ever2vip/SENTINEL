@@ -42,6 +42,12 @@ try { $compiler = Get-Command -Name $Makensis -CommandType Application -ErrorAct
 catch { throw "NSIS compiler '$Makensis' is unavailable. Install NSIS or pass -Makensis with its absolute executable path." }
 $compilerPath = Resolve-InstallerFile $compiler.Source 'NSIS compiler'
 $nativePowerShell = Resolve-InstallerFile (Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe') 'Native Windows PowerShell helper host'
+$nativePowerShellModules = Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/Modules'
+$nativePowerShellDependencies = @(
+    Resolve-InstallerFile (Join-Path $nativePowerShellModules 'Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1') 'Native Windows PowerShell Security module'
+    Resolve-InstallerFile (Join-Path $nativePowerShellModules 'Microsoft.PowerShell.Management/Microsoft.PowerShell.Management.psd1') 'Native Windows PowerShell Management module'
+    Resolve-InstallerFile (Join-Path $nativePowerShellModules 'Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1') 'Native Windows PowerShell Utility module'
+)
 $nsisRoot = Split-Path $compilerPath -Parent
 # Check the installed NSIS includes, Unicode plugins, and standard MUI resources used by this script.
 $nsisInputs = @(
@@ -54,7 +60,7 @@ $nsisInputs = @(
     'Contrib/Modern UI 2/Pages/License.nsh', 'Contrib/Modern UI 2/Pages/StartMenu.nsh',
     'Contrib/Modern UI 2/Pages/UninstallConfirm.nsh', 'Contrib/Modern UI 2/Pages/Welcome.nsh',
     'Contrib/Language files/English.nlf', 'Contrib/Language files/English.nsh',
-    'Plugins/x86-unicode/nsExec.dll', 'Plugins/x86-unicode/nsDialogs.dll',
+    'Plugins/x86-unicode/nsExec.dll', 'Plugins/x86-unicode/nsDialogs.dll', 'Plugins/x86-unicode/System.dll',
     'Contrib/UIs/modern.exe',
     'Contrib/Graphics/Icons/modern-install.ico', 'Contrib/Graphics/Icons/modern-uninstall.ico',
     'Contrib/Graphics/Checks/modern.bmp', 'Contrib/Graphics/Wizard/win.bmp'
@@ -99,7 +105,7 @@ try {
         $files += $componentFiles
     }
     # Recheck every selected file immediately before invoking NSIS, including all recursively bundled payload files.
-    foreach ($dependency in @($installerInputs.Values) + @($compilerPath, $nativePowerShell) + $nsisDependencies + @($files.FullName)) {
+    foreach ($dependency in @($installerInputs.Values) + @($compilerPath, $nativePowerShell) + $nativePowerShellDependencies + $nsisDependencies + @($files.FullName)) {
         if (-not (Test-Path -LiteralPath $dependency -PathType Leaf)) {
             throw "Missing installer dependency before NSIS invocation: $dependency"
         }

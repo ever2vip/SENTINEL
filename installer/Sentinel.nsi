@@ -6,6 +6,18 @@ Unicode true
 ; This x86 NSIS bootstrapper must launch native 64-bit PowerShell explicitly.
 ; Do not rely on thread-local WOW64 redirection state inherited from .onInit.
 !define NATIVE_POWERSHELL "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+!define NATIVE_POWERSHELL_MODULES "$WINDIR\System32\WindowsPowerShell\v1.0\Modules"
+
+!macro ConfigureNativePowerShellModules
+  ; Windows PowerShell must not inherit PowerShell 7 or user module search paths.
+  ; This changes only Setup's process environment and its helper child processes.
+  System::Call 'kernel32::SetEnvironmentVariableW(w "PSModulePath", w "${NATIVE_POWERSHELL_MODULES}") i.r0'
+  ${If} $0 == 0
+    MessageBox MB_ICONSTOP "Setup could not configure the native Windows PowerShell module path." /SD IDOK
+    SetErrorLevel 16
+    Abort
+  ${EndIf}
+!macroend
 
 !macro VerifyNativePowerShell
   ${IfNot} ${FileExists} "${NATIVE_POWERSHELL}"
@@ -77,6 +89,7 @@ Function .onInit
     Abort
   ${EndIf}
   !insertmacro VerifyNativePowerShell
+  !insertmacro ConfigureNativePowerShellModules
   SetRegView 64
   SetShellVarContext all
   InitPluginsDir
@@ -84,6 +97,7 @@ FunctionEnd
 
 Function un.onInit
   !insertmacro VerifyNativePowerShell
+  !insertmacro ConfigureNativePowerShellModules
   SetRegView 64
   SetShellVarContext all
   InitPluginsDir
@@ -104,6 +118,7 @@ FunctionEnd
     FileWrite $2 "PowerShell=${NATIVE_POWERSHELL}$\r$\n"
     FileWrite $2 "Exit=$0$\r$\n"
     FileWrite $2 "Output=$1$\r$\n$\r$\n"
+    FileWrite $2 "PSModulePath=${NATIVE_POWERSHELL_MODULES}$\r$\n"
     FileClose $2
   ${EndIf}
   ${If} $3 == 1
