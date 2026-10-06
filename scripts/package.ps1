@@ -39,7 +39,7 @@ try {
         }
     }
     $setup = Join-Path $releaseDirectory "SENTINEL-Enterprise-V$releaseVersion-Setup-x64.exe"
-    Invoke-Checked $Makensis @('/V3', "/DVERSION=$Version", "/DPUBLISH_DIR=$publish", "/DOUTPUT_FILE=$setup", 'installer/Sentinel.nsi')
+    Invoke-Checked $Makensis @('/V3', "/DVERSION=$Version", "/DPUBLISH_DIR=$publish", "/DSOURCE_DIR=$root", "/DOUTPUT_FILE=$setup", (Join-Path $root 'installer/Sentinel.nsi'))
     $files = @(Get-ChildItem -LiteralPath $publish -Recurse -File | Sort-Object FullName)
     $files += Get-Item -LiteralPath $setup
     $hashes = @($files | ForEach-Object {

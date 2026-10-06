@@ -4,6 +4,10 @@ Unicode true
 !include "x64.nsh"
 !include "WinVer.nsh"
 
+!ifndef SOURCE_DIR
+  !error "SOURCE_DIR is required; use scripts/package.ps1 or pass an absolute source root."
+!endif
+
 !ifndef VERSION
   !define VERSION "1.0.0"
 !endif
@@ -64,7 +68,7 @@ FunctionEnd
 
 !macro StopRunningSentinel PREFIX
   SetOutPath "$PLUGINSDIR"
-  File /oname=Stop-Sentinel.ps1 "helpers/Stop-Sentinel.ps1"
+  File /oname=Stop-Sentinel.ps1 "${SOURCE_DIR}/installer/helpers/Stop-Sentinel.ps1"
   ${PREFIX}retry_stop:
     nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Stop-Sentinel.ps1" -InstallationDirectory "$INSTDIR"'
     Pop $0
@@ -82,7 +86,7 @@ Section "SENTINEL Desktop and Maintenance Service" SecCore
   SectionIn RO
   !insertmacro StopRunningSentinel "install_"
   SetOutPath "$PLUGINSDIR"
-  File /oname=Prepare-Sentinel.ps1 "helpers/Prepare-Sentinel.ps1"
+  File /oname=Prepare-Sentinel.ps1 "${SOURCE_DIR}/installer/helpers/Prepare-Sentinel.ps1"
   nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Prepare-Sentinel.ps1" -InstallationDirectory "$INSTDIR"'
   Pop $0
   Pop $1
@@ -104,14 +108,14 @@ Section "SENTINEL Desktop and Maintenance Service" SecCore
   SetOutPath "$INSTDIR\Service"
   File /r "${PUBLISH_DIR}/Service/*"
   SetOutPath "$INSTDIR"
-  File /oname=INSTALLATION.md "../docs/INSTALLATION.md"
+  File /oname=INSTALLATION.md "${SOURCE_DIR}/docs/INSTALLATION.md"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKLM "Software\SENTINEL" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SENTINEL" "DisplayName" "SENTINEL Enterprise (Setup incomplete)"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SENTINEL" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SENTINEL" "QuietUninstallString" '$\"$INSTDIR\Uninstall.exe$\" /S'
   SetOutPath "$PLUGINSDIR"
-  File /oname=Configure-Sentinel.ps1 "helpers/Configure-Sentinel.ps1"
+  File /oname=Configure-Sentinel.ps1 "${SOURCE_DIR}/installer/helpers/Configure-Sentinel.ps1"
   nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Configure-Sentinel.ps1" -InstallationDirectory "$INSTDIR"'
   Pop $0
   Pop $1
@@ -151,7 +155,7 @@ SectionEnd
 Section "Uninstall"
   !insertmacro StopRunningSentinel "uninstall_"
   SetOutPath "$PLUGINSDIR"
-  File /oname=Remove-SentinelService.ps1 "helpers/Remove-SentinelService.ps1"
+  File /oname=Remove-SentinelService.ps1 "${SOURCE_DIR}/installer/helpers/Remove-SentinelService.ps1"
   nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\Remove-SentinelService.ps1"'
   Pop $0
   Pop $1
