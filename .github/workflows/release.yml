@@ -31,6 +31,30 @@ jobs:
           }
           if (-not (Test-Path -LiteralPath $makensis)) { throw 'makensis.exe is unavailable.' }
           "SENTINEL_MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Verify native Windows PowerShell helper path
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $helper = Join-Path $env:GITHUB_WORKSPACE 'installer/helpers/Prepare-Sentinel.ps1'
+          $hostPath = Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe'
+          foreach ($dependency in @($helper, $hostPath)) {
+            Write-Host "Native helper preflight dependency: $dependency"
+            if (-not (Test-Path -LiteralPath $dependency -PathType Leaf)) {
+              throw "Missing native helper preflight dependency: $dependency"
+            }
+          }
+          $hostProbe = 'if (-not [Environment]::Is64BitProcess) { throw "Expected native 64-bit Windows PowerShell." }; [Console]::WriteLine("Native helper host: Is64BitProcess=" + [Environment]::Is64BitProcess + "; ProgramFiles=" + [Environment]::GetFolderPath("ProgramFiles"))'
+          $encodedProbe = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($hostProbe))
+          & $hostPath -NoProfile -NonInteractive -EncodedCommand $encodedProbe
+          if ($LASTEXITCODE -ne 0) { throw 'Native Windows PowerShell host verification failed.' }
+          $probeDirectory = Join-Path ${env:ProgramW6432} 'SENTINEL-Installer-Path-Preflight'
+          if (Test-Path -LiteralPath $probeDirectory) { throw "Preflight directory already exists: $probeDirectory" }
+          try {
+            & $hostPath -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $helper -InstallationDirectory $probeDirectory
+            if ($LASTEXITCODE -ne 0) { throw "Installer helper preflight failed with exit code $LASTEXITCODE; see the helper's error above." }
+          } finally {
+            if (Test-Path -LiteralPath $probeDirectory) { Remove-Item -LiteralPath $probeDirectory -Recurse -Force }
+          }
       - name: Build Release, run product tests, publish self-contained x64 applications and package
         shell: pwsh
         run: |
