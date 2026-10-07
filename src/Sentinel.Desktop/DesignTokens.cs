@@ -19,4 +19,7 @@ internal static class DesignTokens
     public const double SidebarWidth = 248;
     public const double CompactSidebarWidth = 76;
     public const double HeaderHeight = 76;
+    public const double TableRowHeight = 48;
+    public const double TableHeaderHeight = 44;
+    public const double TableViewportHeight = 352;
 }

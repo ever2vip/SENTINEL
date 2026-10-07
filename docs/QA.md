@@ -52,3 +52,14 @@ Run the complete harness on clean Windows 10/11 x64, then execute `scripts/verif
 Verify Start Menu and optional desktop shortcuts, LocalService registration and quoted service path, service data ACLs, heartbeat, reinstall/upgrade, clean uninstall, and preservation of operator assessment and audit data. Do not mark these steps passed based on source inspection, cross-compilation, or installer packaging alone.
 
 Actual installer compilation and archive integrity passed. All 635 bundled application/runtime files match the published payload hashes. Setup is available at `/workspace/release/SENTINEL-Enterprise-V1.0/SENTINEL-Enterprise-V1.0-Setup-x64.exe`. Windows installation and post-install interactive Demo checks remain NOT RUN.
+
+
+## V1.1 acceptance cycle
+
+Before UI edits, Windows run [37614951188](https://github.com/ever2vip/SENTINEL/actions/runs/37614951188) checked out the immutable v1.0.0 tag and passed the complete Release build (zero warnings/errors), 92 product checks and 17 engine checks; one machine-dependent local endpoint check was intentionally skipped. The accepted Core/Infrastructure/service/engine source and evidence schema remain unchanged.
+
+V1.1 acceptance runs the actual installed Desktop assembly against isolated operator data. It navigates real sidebar controls, exercises asset/finding filters and detail tabs, graph/path controls, offline analyst citations, Report Studio preview/exports, remediation persistence and environment boundaries, authorized-scope rejection, settings/theme persistence and readable errors. RenderTargetBitmap produces 360 route/theme/resolution/effective-scale PNGs plus interaction captures. This tests equivalent DIP sizes and exports images at the requested pixel densities; it does not emulate physical OS display-DPI transitions.
+
+The installer gate includes fresh installation, LocalService/ACL/heartbeat/first launch checks and actual V1.0-to-V1.1 upgrade from the public historical installer. It verifies evidence/settings/history/audit/protected secrets and preserves operator data on uninstall. Publication requires successful Windows and installed desktop results, matching installed/published Desktop assembly hashes and round-trip SHA-256 verification of release assets.
+
+The first integrated build exposed two C# local variable naming conflicts; both were fixed. The next Release build and installer passed, but strict rendered QA exposed missing Window theme styles and inherited primary-button text contrast. These are being corrected before publication. No failed acceptance is waived.

@@ -25,7 +25,7 @@
     <SolidColorBrush x:Key="NeutralSubtleBrush" Color="#223147"/>
 
     <Style TargetType="Window"><Setter Property="FontFamily" Value="{StaticResource UiFontFamily}"/><Setter Property="FontSize" Value="{StaticResource BodyFontSize}"/><Setter Property="Background" Value="{DynamicResource BackgroundBrush}"/><Setter Property="Foreground" Value="{DynamicResource TextBrush}"/></Style>
-    <Style TargetType="TextBlock"><Setter Property="FontFamily" Value="{StaticResource UiFontFamily}"/><Setter Property="FontSize" Value="{StaticResource BodyFontSize}"/><Setter Property="Foreground" Value="{DynamicResource TextBrush}"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
+    <Style TargetType="TextBlock"><Setter Property="FontFamily" Value="{StaticResource UiFontFamily}"/><Setter Property="FontSize" Value="{StaticResource BodyFontSize}"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
     <Style TargetType="Label"><Setter Property="Foreground" Value="{DynamicResource TextBrush}"/><Setter Property="FontSize" Value="14"/><Setter Property="Padding" Value="0,0,0,8"/></Style>
     <Style x:Key="PageTitleText" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}"><Setter Property="FontSize" Value="{StaticResource PageTitleFontSize}"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
     <Style x:Key="SectionTitleText" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}"><Setter Property="FontSize" Value="{StaticResource SectionTitleFontSize}"/><Setter Property="FontWeight" Value="SemiBold"/></Style>

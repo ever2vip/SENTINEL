@@ -225,6 +225,22 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      - name: Upload compact visual review gallery
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SENTINEL-Enterprise-V1.1-Visual-Preview
+          path: |
+            artifacts/windows-verification/desktop/screenshots/*-1366x768-effective-100pct.png
+            artifacts/windows-verification/desktop/screenshots/*-selected.png
+            artifacts/windows-verification/desktop/screenshots/*-breakpoint.png
+            artifacts/windows-verification/desktop/screenshots/*-answer.png
+            artifacts/windows-verification/desktop/screenshots/*-preview.png
+            artifacts/windows-verification/desktop/screenshots/*-awaiting-evidence.png
+            artifacts/windows-verification/desktop/screenshots/*authorization*.png
+          if-no-files-found: warn
+          retention-days: 30
+
   publish-release:
     if: github.event_name == 'push' && github.ref == 'refs/tags/v1.1.0'
     needs: windows-release-gate

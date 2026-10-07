@@ -38,6 +38,8 @@ public partial class MainWindow : Window
     public MainWindow(string? dataDirectory)
     {
         InitializeComponent();
+        Width = Math.Max(MinWidth, Math.Min(Width, SystemParameters.WorkArea.Width - 24));
+        Height = Math.Max(MinHeight, Math.Min(Height, SystemParameters.WorkArea.Height - 24));
         _dataDirectory = dataDirectory ?? System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sentinel");
         Directory.CreateDirectory(_dataDirectory);
         _repository = new SQLiteEnvironmentRepository(System.IO.Path.Combine(_dataDirectory, "sentinel.db"));

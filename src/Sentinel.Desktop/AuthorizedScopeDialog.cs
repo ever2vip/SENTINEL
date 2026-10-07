@@ -12,6 +12,7 @@ internal sealed class AuthorizedScopeDialog : Window
 
     public AuthorizedScopeDialog(IReadOnlyList<EngineDescriptor> engines)
     {
+        Style = (Style)Application.Current.FindResource(typeof(Window));
         Title = "SENTINEL · Authorize assessment scope";
         Width = Math.Min(800, SystemParameters.WorkArea.Width - 32); Height = Math.Min(840, SystemParameters.WorkArea.Height - 32); MinHeight = 460; MinWidth = 600; WindowStartupLocation = WindowStartupLocation.CenterOwner;
         var available = engines.Where(e => e.IsAvailable).ToArray();

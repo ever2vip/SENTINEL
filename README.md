@@ -1,12 +1,12 @@
-# SENTINEL Enterprise 1.0
+# SENTINEL Enterprise V1.1
 
 A native Windows defensive security operations platform that connects collected evidence to business context and prioritized remediation. The repository includes the desktop application, offline demo organization, contextual risk and graph engines, standalone SQLite storage, read-only collectors, reporting, optional AI interfaces, Windows maintenance service, and Setup infrastructure.
 
-**Release status: unsigned Windows testing build.** Linux can compile the complete Windows solution and run the portable product tests. Windows 10/11 interactive acceptance, service installation, upgrade, uninstallation, and Authenticode signing must pass before this build is designated a release candidate. See [QA](docs/QA.md) and [installation](docs/INSTALLATION.md).
+**V1.1 status: Windows QA in progress; publication is gated on passing installed UI and upgrade checks.** The accepted V1.0 Core, Infrastructure, security engines, service and SQLite schema remain unchanged. V1.1 adds a consistent desktop design, grouped navigation, detailed record workspaces, interactive graph/path analysis, conversation-style offline analysis, Report Studio and separate remediation planning metadata. The V1.0 release and assets remain historical. Physical Windows 10/11 and native display-DPI transitions require acceptance beyond the Windows Server CI rendering matrix. The installer is unsigned. See [QA](docs/QA.md) and [installation](docs/INSTALLATION.md).
 
 ## Use on Windows
 
-Run `SENTINEL-Setup-1.0.0-win-x64.exe` from the release artifacts as an administrator. Then launch **SENTINEL Enterprise** from the Start Menu. Choose **Demo Organization** for a completely offline assessment, or **Live Environment** to collect evidence from an explicitly authorized scope.
+Run `SENTINEL-Enterprise-V1.1-Setup-x64.exe` from the release artifacts as an administrator. Then launch **SENTINEL Enterprise** from the Start Menu. Choose **Demo Organization** for a completely offline assessment, or **Live Environment** to collect evidence from an explicitly authorized scope.
 
 The installation is self-contained: no Docker, Node.js, web server, separate database server, or developer IDE is required. The desktop runs as the signed-in operator. The Windows service uses LocalService and maintains its own health and optional log retention; it does not run security assessments or read operator secrets.
 
@@ -36,10 +36,10 @@ The tests are executable behavioral suites; a nonzero exit code indicates failur
 On an isolated elevated Windows test machine:
 
 ```powershell
-./scripts/verify-windows.ps1 -SetupPath ./artifacts/SENTINEL-Setup-1.0.0-win-x64.exe -InstallUninstall -DesktopSmoke
+./scripts/verify-windows.ps1 -SetupPath ./release/SENTINEL-Enterprise-V1.1/SENTINEL-Enterprise-V1.1-Setup-x64.exe -InstallUninstall -DesktopSmoke
 ```
 
-The verification script installs and uninstalls SENTINEL and is intended for a disposable test machine. The interactive checklist remains required.
+The verification script installs and uninstalls SENTINEL and is intended for a disposable test machine. The installed WPF harness captures all 20 routes in both themes across the required resolution/effective-scaling matrix and verifies actual controls, reports, analyst and data isolation. The upgrade gate uses the checksum-pinned historical V1.0 installer and preserves evidence/settings/DPAPI secrets. See [V1.1 baseline](docs/V1.1-BASELINE.md) and [design contract](docs/V1.1-DESIGN.md). The physical Windows interactive checklist remains required.
 
 For portable engine diagnostics, `dotnet run --project src/Sentinel.Cli -- --help` describes demo, status, report, authorized scan, and import commands. CLI collection requires an operator name and `--confirm-authorized`; default demo/status/report commands do not contact targets.
 
