@@ -49,6 +49,7 @@ public partial class MainWindow : Window
         Loaded += async (_, _) => await InitializeAsync();
         SourceInitialized += (_, _) => { if (dataDirectory is null) _tray = new TrayNotifications(this, () => Navigate("Monitoring")); };
         SizeChanged += (_, _) => ApplyNavigationLayout();
+        ShellRoot.SizeChanged += (_, _) => ApplyNavigationLayout();
         Closing += Window_Closing;
         Closed += (_, _) => { _tray?.Dispose(); _repository.Dispose(); };
     }
@@ -110,8 +111,7 @@ public partial class MainWindow : Window
         _route = route;
         foreach (var pair in _navigationButtons)
         {
-            pair.Value.SetResourceReference(Control.BackgroundProperty, pair.Key == route ? "SelectionBrush" : "SidebarBrush");
-            pair.Value.SetResourceReference(Control.BorderBrushProperty, pair.Key == route ? "AccentBrush" : "SidebarBrush");
+            pair.Value.Style = (Style)Application.Current.FindResource(pair.Key == route ? "SelectedNavigationButton" : "NavigationButton");
         }
         RenderPage();
     }

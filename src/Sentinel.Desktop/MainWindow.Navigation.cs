@@ -39,6 +39,7 @@ public partial class MainWindow
                 button.Margin = new Thickness(0, 2, 0, 2);
                 button.Padding = new Thickness(12, 10, 8, 10);
                 button.Tag = route;
+                button.Style = (Style)Application.Current.FindResource("NavigationButton");
                 AutomationProperties.SetName(button, route);
                 _navigationButtons.Add(route, button);
                 routes.Children.Add(button);
@@ -55,7 +56,7 @@ public partial class MainWindow
 
     private void ApplyNavigationLayout()
     {
-        _compactNavigation = _manualCompact || ActualWidth < 1160;
+        _compactNavigation = _manualCompact || ShellRoot.ActualWidth < 1160;
         SidebarColumn.Width = new GridLength(_compactNavigation ? 76 : 248);
         BrandLabel.Visibility = CompactNavigationLabel.Visibility = VersionLabel.Visibility = _compactNavigation ? Visibility.Collapsed : Visibility.Visible;
         foreach (var (label, group) in _navigationGroups)
@@ -69,7 +70,7 @@ public partial class MainWindow
                 row.Children[1].Visibility = _compactNavigation ? Visibility.Collapsed : Visibility.Visible;
                 ((FrameworkElement)row.Children[0]).Margin = _compactNavigation ? new Thickness(0) : new Thickness(0, 0, 12, 0);
             }
-        AssessmentContext.Visibility = ActualWidth < 1100 ? Visibility.Collapsed : Visibility.Visible;
+        AssessmentContext.Visibility = ShellRoot.ActualWidth < 1100 ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void Notifications_Click(object sender, RoutedEventArgs e) => Navigate("Monitoring");

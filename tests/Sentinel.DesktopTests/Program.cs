@@ -46,6 +46,7 @@ internal static class Program
                 catch (Exception exception) { acceptance.RecordFatalFailure(exception); }
                 finally
                 {
+                    acceptance.DisposeRenderingHost();
                     acceptance.WriteResults();
                     application.Dispatcher.BeginInvokeShutdown(DispatcherPriority.Background);
                 }
@@ -101,6 +102,7 @@ internal sealed class DesktopAcceptance(Options options)
     private JsonElement _snapshot;
     private string _assemblyHash = "";
     private uint _nativeDpi;
+    private HwndSource? _renderSource;
     private readonly Stopwatch _elapsed = Stopwatch.StartNew();
     public bool Failed => _checks.Any(check => check.Status == "failed") || _dispatcherFailures.Count > 0;
 
@@ -206,6 +208,7 @@ internal sealed class DesktopAcceptance(Options options)
             Assert(_dispatcherFailures.Count == 0, "WPF dispatcher failures occurred: " + string.Join("; ", _dispatcherFailures));
             return Task.CompletedTask;
         });
+        DisposeRenderingHost();
         _window.Close();
         Probe("DisposeRepositoryForTesting");
     }
@@ -386,6 +389,7 @@ internal sealed class DesktopAcceptance(Options options)
             using var settings = JsonDocument.Parse(json);
             return settings.RootElement.GetProperty("Theme").GetString() == "Light" && settings.RootElement.GetProperty("RetentionDays").GetInt32() == 180;
         }, "Settings controls did not persist theme and retention.");
+        DisposeRenderingHost();
         _window.Close();
         Probe("DisposeRepositoryForTesting");
         _window = NewWindow();
@@ -643,16 +647,46 @@ internal sealed class DesktopAcceptance(Options options)
     {
         var width = physicalWidth / scale;
         var height = physicalHeight / scale;
-        _window.MinWidth = 0;
-        _window.MinHeight = 0;
+        // The hosted runner's physical monitor can be only 1024x768. A normal
+        // Window coerces SizeToContent to that work area and clips large bitmap
+        // captures. Host the SAME production visual tree on a resizable WPF HWND
+        // outside the monitor for the equivalent-DIP rendering matrix. This
+        // preserves actual templates/controls/IsVisible and never duplicates UI.
+        if (_renderSource is null)
+        {
+            _window.Content = null;
+            _root.SetResourceReference(System.Windows.Documents.TextElement.ForegroundProperty, "TextBrush");
+            _renderSource = new HwndSource(new HwndSourceParameters("SENTINEL rendering acceptance")
+            {
+                PositionX = -16000, PositionY = -16000,
+                Width = (int)Math.Ceiling(width), Height = (int)Math.Ceiling(height),
+                WindowStyle = unchecked((int)0x90000000) // visible popup; no work-area/chrome size coercion
+            });
+            _renderSource.RootVisual = _root;
+        }
+        var nativeScale = GetDpiForWindow(_renderSource.Handle) / 96.0;
+        if (!SetWindowPos(_renderSource.Handle, IntPtr.Zero, -16000, -16000,
+                (int)Math.Ceiling(width * nativeScale), (int)Math.Ceiling(height * nativeScale), 0x0014))
+            throw new InvalidOperationException("The actual WPF rendering host could not resize to the requested viewport.");
         _root.Width = width;
         _root.Height = height;
-        _window.SizeToContent = SizeToContent.WidthAndHeight;
         await Flush();
         _root.Measure(new Size(width, height));
         _root.Arrange(new Rect(0, 0, width, height));
         _root.UpdateLayout();
         await Flush();
+        Assert(Math.Abs(_root.ActualWidth - width) < 1 && Math.Abs(_root.ActualHeight - height) < 1,
+            "The production visual tree does not match the requested logical viewport.");
+    }
+
+    public void DisposeRenderingHost()
+    {
+        if (_renderSource is null) return;
+        _renderSource.RootVisual = null;
+        _renderSource.Dispose();
+        _renderSource = null;
+        _root.Width = _root.Height = double.NaN;
+        if (_window.Content is null) _window.Content = _root;
     }
 
     private async Task CaptureInteraction(string name, string theme)
@@ -677,9 +711,17 @@ internal sealed class DesktopAcceptance(Options options)
         var pixels = new byte[physicalWidth * physicalHeight * 4];
         bitmap.CopyPixels(pixels, physicalWidth * 4, 0);
         var colors = new HashSet<int>();
+        var samples = 0;
+        var transparentSamples = 0;
         for (var index = 0; index < pixels.Length; index += Math.Max(4, pixels.Length / 8192 / 4 * 4))
+        {
             colors.Add(BitConverter.ToInt32(pixels, index));
+            samples++;
+            if (pixels[index + 3] < 255) transparentSamples++;
+        }
         if (colors.Count < 8) errors.Add("The actual rendered screenshot is blank or lacks meaningful page content.");
+        if (transparentSamples > samples / 1000)
+            errors.Add($"The production visual tree did not paint the full viewport: {transparentSamples}/{samples} sampled pixels are transparent.");
         var viewport = new Rect(0, 0, physicalWidth / scale, physicalHeight / scale);
         foreach (var element in Descendants(_root).OfType<FrameworkElement>())
         {
@@ -714,8 +756,10 @@ internal sealed class DesktopAcceptance(Options options)
             diagnostics.Add(new(element.GetType().Name, Limit(label), bounds.X, bounds.Y, bounds.Width, bounds.Height, fontSize,
                 AutomationProperties.GetAutomationId(element), element.IsKeyboardFocused, contrast));
         }
+        if (diagnostics.Count < 15)
+            errors.Add("The rendering host exposes too few visible production controls for meaningful UI acceptance.");
         return new(route, theme, physicalWidth, physicalHeight, scale,
-            "simulated-effective-display-scaling; native window DPI recorded separately",
+            "actual-production-WPF-visual-tree; simulated-effective-display-scaling; native window DPI recorded separately",
             physicalWidth / scale, physicalHeight / scale,
             Path.GetRelativePath(options.EvidenceDirectory, path).Replace('\\', '/'), new FileInfo(path).Length,
             Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant(), diagnostics, errors.Distinct().ToArray());
@@ -956,6 +1000,9 @@ internal sealed class DesktopAcceptance(Options options)
     }
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr window);
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
 }
 
 internal sealed record CheckResult(string Name, string Status, string Details, long ElapsedMilliseconds);
