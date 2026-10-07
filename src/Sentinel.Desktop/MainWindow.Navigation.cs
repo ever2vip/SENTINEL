@@ -118,7 +118,9 @@ public partial class MainWindow
         PageTitle.Text = "Break this path";
         PageSubtitle.Text = "A defensive plan supported by collected relationships.";
         PageContent.Children.Add(Ui.Button("Back to remediation", () => Navigate("Remediation")));
-        PageContent.Children.Add(Ui.Card(new AttackPathView(Snapshot, path, OpenAsset, OpenFinding, null, OpenPathGraph, false, _coordinator.Remediations, _coordinator.Risk)));
+        var pathView = new AttackPathView(Snapshot, path, OpenAsset, OpenFinding, null, OpenPathGraph, false, _coordinator.Remediations, _coordinator.Risk);
+        pathView.ShowBreakWorkspace();
+        PageContent.Children.Add(Ui.Card(pathView));
         var related = _coordinator.Remediations.Where(a => a.FindingIds.Intersect(path.FindingIds).Any()).ToList();
         foreach (var action in related) PageContent.Children.Add(Ui.Card(ActionSummary(action)));
         PageContent.Children.Add(Ui.Button("Open full remediation workflow", () => Navigate("Remediation"), true));

@@ -1,7 +1,5 @@
 name: SENTINEL V1.1 quality
 on:
-  push:
-    branches: ['v1.1-development']
   workflow_dispatch:
 permissions:
   contents: read

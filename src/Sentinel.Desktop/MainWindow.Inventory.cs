@@ -25,7 +25,7 @@ public partial class MainWindow
         var risk = InventoryFilter("Risk level", ["Critical", "High", "Medium", "Low", "Not modeled"]);
         var status = InventoryFilter("Status", rows.Select(a => a.Status));
         var count = Ui.Text("", 12, "MutedBrush");
-        var grid = InventoryTable(rows, ("Asset", "Name", 0), ("Status", "Status", 130), ("Type", "Kind", 135), ("IP / address", "Address", 175), ("Operating system", "OperatingSystem", 190), ("Owner", "Owner", 150), ("Criticality", "Criticality", 145), ("Peak finding risk", "RiskDisplay", 140), ("Findings", "FindingCount", 95), ("Last observed", "LastAssessed", 165));
+        var grid = InventoryTable(rows, ("Asset", "Name", 0), ("Status", "Status", 155), ("Type", "Kind", 135), ("IP / address", "Address", 175), ("Operating system", "OperatingSystem", 190), ("Owner", "Owner", 150), ("Criticality", "Criticality", 145), ("Peak finding risk", "RiskDisplay", 140), ("Active findings", "FindingCount", 125), ("Last observed", "LastAssessed", 165));
         InventoryBadgeColumn(grid, "Status", "Status", "StatusBrush");
         InventoryBadgeColumn(grid, "Criticality", "Criticality", "CriticalityBrush", "CriticalityDetail");
         InventoryBadgeColumn(grid, "Peak finding risk", "RiskDisplay", "RiskBrush", "RiskExplanation");
@@ -121,8 +121,9 @@ public partial class MainWindow
         else
         {
             var table = InventoryTable(services.Select(n => new { Node = n, Name = n.Label, Protocol = n.Properties.GetValueOrDefault("protocolIdentity", n.Properties.GetValueOrDefault("protocol", "Not verified")), Source = n.Source, Confidence = n.Confidence.ToString("P0"), Observed = n.ObservedAt.LocalDateTime.ToString("g") }).ToList(), ("Service", "Name", 0), ("Identity", "Protocol", 160), ("Source", "Source", 145), ("Confidence", "Confidence", 100), ("Observed", "Observed", 165));
+            table.SelectionChanged += (_, _) => { if (table.SelectedItem is not null && table.SelectedItem.GetType().GetProperty("Node")?.GetValue(table.SelectedItem) is EvidenceNode selected) OpenEvidence(selected.Id); };
             body.Children.Add(table);
-            body.Children.Add(Ui.Button("Inspect service relationships", () => OpenEvidence(asset.Id)));
+            body.Children.Add(Ui.Button("Inspect service relationships", () => OpenEvidence(AssetGraphId(asset))));
         }
         var observations = Snapshot.Observations.Where(o => o.AssetId == asset.Id && (o.EngineId.Contains("network", StringComparison.OrdinalIgnoreCase) || o.Property.Contains("port", StringComparison.OrdinalIgnoreCase))).OrderByDescending(o => o.ObservedAt).ToList();
         if (observations.Count > 0) body.Children.Add(InventoryObservationTable(observations));
@@ -175,7 +176,7 @@ public partial class MainWindow
         body.Children.Add(InventoryEvidenceNodes(Snapshot.Nodes.Where(n => ids.Contains(n.Id)).ToList()));
         var certs = Snapshot.Certificates.Where(c => c.AssetId == asset.Id).ToList();
         if (certs.Count > 0) body.Children.Add(InventoryTable(certs.Select(c => new { c.Subject, c.Issuer, Expires = c.NotAfter.LocalDateTime.ToString("g"), c.Thumbprint }).ToList(), ("Certificate", "Subject", 0), ("Issuer", "Issuer", 200), ("Expires", "Expires", 165), ("Thumbprint", "Thumbprint", 230)));
-        body.Children.Add(Ui.Button("Focus asset in evidence graph", () => OpenEvidence(asset.Id), true));
+        body.Children.Add(Ui.Button("Focus asset in evidence graph", () => OpenEvidence(AssetGraphId(asset)), true));
         return body;
     }
 
@@ -384,6 +385,8 @@ public partial class MainWindow
 
     private HashSet<string> AssetNodeIds(Asset asset) => Snapshot.Nodes.Where(n => n.Id == asset.Id ||
         ((n.Kind is EvidenceKind.Asset or EvidenceKind.CloudResource) && n.Properties.GetValueOrDefault("assetId") == asset.Id)).Select(n => n.Id).Append(asset.Id).ToHashSet();
+    private string AssetGraphId(Asset asset) => Snapshot.Nodes.FirstOrDefault(n => n.Id == asset.Id)?.Id ??
+        Snapshot.Nodes.FirstOrDefault(n => (n.Kind is EvidenceKind.Asset or EvidenceKind.CloudResource) && n.Properties.GetValueOrDefault("assetId") == asset.Id)?.Id ?? asset.Id;
     private IReadOnlyList<EvidenceNode> AssetDirectNodes(Asset asset)
     {
         var roots = AssetNodeIds(asset); var ids = Snapshot.Edges.Where(e => roots.Contains(e.SourceId) || roots.Contains(e.TargetId)).Select(e => roots.Contains(e.SourceId) ? e.TargetId : e.SourceId).ToHashSet();
@@ -425,9 +428,9 @@ public partial class MainWindow
     {
         var tabs = new TabControl { Margin = new Thickness(0, 16, 0, 0) }; AutomationProperties.SetName(tabs, "Record detail workspace");
         foreach (var section in sections) tabs.Items.Add(new TabItem { Header = section.Label, Tag = section.Build });
-        tabs.SelectionChanged += (_, e) => { if (e.Source == tabs && tabs.SelectedItem is TabItem { Content: null, Tag: Func<UIElement> build } item) item.Content = new Border { Child = build(), Padding = new Thickness(0, 16, 0, 0) }; };
+        tabs.SelectionChanged += (_, e) => { if (e.Source == tabs && tabs.SelectedItem is TabItem { Content: null, Tag: Func<UIElement> build } item) item.Content = new Border { Child = build() }; };
         tabs.SelectedIndex = 0;
-        if (tabs.Items.Count > 0 && tabs.Items[0] is TabItem { Content: null, Tag: Func<UIElement> initial } first) first.Content = new Border { Child = initial(), Padding = new Thickness(0, 16, 0, 0) };
+        if (tabs.Items.Count > 0 && tabs.Items[0] is TabItem { Content: null, Tag: Func<UIElement> initial } first) first.Content = new Border { Child = initial() };
         return tabs;
     }
     private static ComboBox InventoryFilter(string label, IEnumerable<string> values)
@@ -438,6 +441,15 @@ public partial class MainWindow
     private static DataGrid InventoryTable(IEnumerable source, params (string Heading, string Path, double Width)[] columns)
     {
         var table = Ui.Table(source, columns); table.Height = 352; table.EnableRowVirtualization = true; table.EnableColumnVirtualization = true; table.SelectionMode = DataGridSelectionMode.Single;
+        foreach (var column in table.Columns.OfType<DataGridTextColumn>())
+        {
+            var style = new Style(typeof(TextBlock), (Style)Application.Current.FindResource(typeof(TextBlock)));
+            style.Setters.Add(new Setter(TextBlock.TextWrappingProperty, TextWrapping.NoWrap));
+            style.Setters.Add(new Setter(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis));
+            style.Setters.Add(new Setter(FrameworkElement.ToolTipProperty, new Binding((column.Binding as Binding)?.Path?.Path ?? "")));
+            column.ElementStyle = style;
+            if (column.Width.IsStar) column.MinWidth = 220;
+        }
         VirtualizingPanel.SetIsVirtualizing(table, true); VirtualizingPanel.SetVirtualizationMode(table, VirtualizationMode.Recycling); ScrollViewer.SetCanContentScroll(table, true); ScrollViewer.SetHorizontalScrollBarVisibility(table, ScrollBarVisibility.Auto);
         AutomationProperties.SetName(table, "Evidence inventory table"); return table;
     }
@@ -445,8 +457,15 @@ public partial class MainWindow
     {
         table.SizeChanged += (_, _) =>
         {
-            var hiddenCount = table.ActualWidth < 620 ? lowerPriority.Length : table.ActualWidth < 820 ? Math.Max(0, lowerPriority.Length - 1) : table.ActualWidth < 1100 ? Math.Min(2, lowerPriority.Length) : 0;
-            for (var i = 0; i < lowerPriority.Length; i++) { var column = table.Columns.FirstOrDefault(c => c.Header?.ToString() == lowerPriority[i]); if (column is not null) column.Visibility = i < hiddenCount ? Visibility.Collapsed : Visibility.Visible; }
+            if (table.ActualWidth <= 0) return;
+            foreach (var heading in lowerPriority) { var column = table.Columns.FirstOrDefault(c => c.Header?.ToString() == heading); if (column is not null) column.Visibility = Visibility.Visible; }
+            double RequiredWidth() => table.Columns.Where(c => c.Visibility == Visibility.Visible).Sum(c => c.Width.IsStar ? c.MinWidth : Math.Max(c.MinWidth, c.Width.Value));
+            foreach (var heading in lowerPriority)
+            {
+                if (RequiredWidth() + DesignTokens.SpaceLg <= table.ActualWidth) break;
+                var column = table.Columns.FirstOrDefault(c => c.Header?.ToString() == heading);
+                if (column is not null) column.Visibility = Visibility.Collapsed;
+            }
         };
     }
     private static void InventoryBadgeColumn(DataGrid table, string heading, string valuePath, string colorPath, string? tooltipPath = null)

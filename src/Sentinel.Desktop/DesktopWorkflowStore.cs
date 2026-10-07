@@ -26,6 +26,10 @@ internal sealed class DesktopWorkflowStore(string dataDirectory)
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            // Clear the previous environment immediately. A malformed file must not
+            // leave another environment's planning records available to this one.
+            _document = new() { EnvironmentId = environmentId };
+            _path = null;
             var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(environmentId))).ToLowerInvariant();
             var path = Path.Combine(_directory, key + ".v1.json");
             WorkflowDocument document;
@@ -39,7 +43,12 @@ internal sealed class DesktopWorkflowStore(string dataDirectory)
                     throw new InvalidDataException("This workflow metadata version or environment is incompatible. Existing evidence and planning files were preserved.");
                 if (document.Plans is null || document.Reviews is null)
                     throw new InvalidDataException("The local workflow metadata is incomplete. Existing files were preserved.");
-                foreach (var plan in document.Plans.Values) ValidatePlan(plan);
+                foreach (var plan in document.Plans.Values)
+                {
+                    ValidatePlan(plan);
+                    if (plan.EnvironmentId != environmentId)
+                        throw new InvalidDataException("A saved remediation plan belongs to a different environment. Existing workflow metadata was preserved.");
+                }
             }
             _document = document;
             _path = path;
@@ -98,6 +107,9 @@ internal sealed class DesktopWorkflowStore(string dataDirectory)
     private static void ValidatePlan(RemediationPlan plan)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(plan.ActionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(plan.EnvironmentId);
+        if (plan.Owner is null || plan.Title is null || plan.Notes is null || plan.FindingIds is null || plan.AssetIds is null || plan.EvidenceIds is null || plan.RootCauseKeys is null)
+            throw new ArgumentException("The saved remediation plan is incomplete. Existing workflow metadata was preserved.");
         if (!RemediationPlan.EditableStatuses.Contains(plan.Status, StringComparer.Ordinal))
             throw new ArgumentException("Verified is evidence-derived. Choose a supported planning status instead.");
         if (plan.Owner.Length > 256 || plan.Title.Length > 1024 || plan.Notes.Any(n => n.Text.Length > 4096))
@@ -111,6 +123,7 @@ internal sealed class DesktopWorkflowStore(string dataDirectory)
 
     private sealed class WorkflowDocument
     {
+        public WorkflowDocument() { }
         public int SchemaVersion { get; set; } = 1;
         public string EnvironmentId { get; set; } = "";
         public Dictionary<string, RemediationPlan> Plans { get; set; } = new(StringComparer.Ordinal);
@@ -119,6 +132,7 @@ internal sealed class DesktopWorkflowStore(string dataDirectory)
 
     private sealed class FindingReview
     {
+        public FindingReview() { }
         public bool UnderReview { get; set; }
         public string Reason { get; set; } = "";
         public DateTimeOffset UpdatedAt { get; set; }
@@ -127,6 +141,7 @@ internal sealed class DesktopWorkflowStore(string dataDirectory)
 
 internal sealed class RemediationPlan
 {
+    public RemediationPlan() { }
     internal static readonly string[] EditableStatuses = ["Recommended", "Planned", "In Progress", "Awaiting Verification", "Accepted"];
     public string ActionId { get; set; } = "";
     public string EnvironmentId { get; set; } = "";

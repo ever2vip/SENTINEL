@@ -176,8 +176,16 @@ internal sealed class DesktopAcceptance(Options options)
         await CheckAttackPathWorkflow();
         await CheckAnalystWorkflow();
         await CheckReportStudio();
+        await CheckReportScopeIsolation();
         await CheckPlanningMetadata();
         await CheckVerificationSemantics();
+        await CheckRemediationWorkflow();
+        await CheckAuthorizedScopeDialog();
+        await Check("notification-header-navigates-recorded-monitoring", async () =>
+        {
+            InvokeButton(FindButton("Notifications"));
+            await WaitUntil(() => ProbeProperty<string>("CurrentRouteForTesting") == "Monitoring", "The application notification action did not navigate to actual recorded monitoring evidence.");
+        });
         await CheckSettingsPersistence();
         await Check("Live-selector-remains-separate-and-unassessed", async () =>
         {
@@ -269,25 +277,33 @@ internal sealed class DesktopAcceptance(Options options)
         await Navigate("Evidence Graph");
         var text = AllText();
         Assert(text.Contains("Legend", StringComparison.OrdinalIgnoreCase) || text.Contains("Node types", StringComparison.OrdinalIgnoreCase), "The graph does not expose an intelligible node-type legend.");
-        var search = FindTextBox("Search node", "Search nodes", "Search graph");
+        var search = FindTextBox("Search evidence node labels or identifiers", "Search node", "Search nodes", "Search graph");
         search.Text = "NS-DC01";
-        await Flush();
+        var graph = Descendants(PageRoot()).FirstOrDefault(element => element.GetType().FullName == "Sentinel.Desktop.EvidenceGraphView")
+            ?? throw new InvalidOperationException("The actual interactive graph control is missing.");
+        await WaitUntil(() => ((IEnumerable<string>)Get(graph, "DisplayedNodeIds")!).Contains("server-dc01"), "Debounced graph search did not render the actual matching evidence node.");
+        Matrix MatrixForGraph() => (Matrix)graph.GetType().GetField("_matrix", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(graph)!;
+        var zoomBefore = MatrixForGraph().M11;
         InvokeButton(FindButton("Zoom in"));
         await Flush();
+        Assert(MatrixForGraph().M11 > zoomBefore, "The graph zoom-in control did not change its actual rendered transform.");
+        var zoomed = MatrixForGraph().M11;
         InvokeButton(FindButton("Zoom out"));
         await Flush();
+        Assert(MatrixForGraph().M11 < zoomed, "The graph zoom-out control did not change its actual rendered transform.");
         InvokeButton(FindButton("Fit graph", "Fit to view", "Fit"));
         await Flush();
         var node = Descendants(_root).OfType<Button>().FirstOrDefault(button => AccessibleText(button).Contains("NS-DC01", StringComparison.Ordinal));
         Assert(node is not null, "The searched evidence node is not selectable through an accessible real graph control.");
         InvokeButton(node!);
         await Flush();
+        Assert((string?)Get(graph, "SelectedNodeId") == "server-dc01", "The selected graph control did not inspect the actual requested evidence record.");
         text = AllText();
         Assert(text.Contains("NS-DC01", StringComparison.Ordinal) && (text.Contains("Provenance", StringComparison.OrdinalIgnoreCase) || text.Contains("Source", StringComparison.OrdinalIgnoreCase)), "Node selection did not populate the graph inspector with provenance.");
         await CaptureInteraction("Evidence-Graph-selected", "Dark");
         InvokeButton(FindButton("Reset view", "Reset"));
         search.Text = "";
-        await Flush();
+        await WaitUntil(() => (bool)Get(graph, "IsClusterOverview")!, "Graph reset did not restore its bounded evidence overview.");
     });
 
     private async Task CheckAttackPathWorkflow() => await Check("Attack-Paths-real-visual-chain-and-defensive-breakpoint", async () =>
@@ -309,7 +325,10 @@ internal sealed class DesktopAcceptance(Options options)
         var input = FindTextBox("Question", "Ask the analyst", "Analyst question");
         input.Text = "What should we fix first?";
         InvokeButton(FindButton("Ask analyst", "Ask", "Send question", "Send"));
-        await WaitUntil(() => AllText().Contains("Confidence", StringComparison.OrdinalIgnoreCase), "The offline analyst did not render its confidence-aware answer.");
+        await WaitUntil(() => AllText().Contains("ANALYST RESPONSE", StringComparison.Ordinal) &&
+            Descendants(_root).OfType<Button>().Any(button => AccessibleText(button).StartsWith("Finding:", StringComparison.OrdinalIgnoreCase)
+                || AccessibleText(button).StartsWith("Asset:", StringComparison.OrdinalIgnoreCase)),
+            "The offline analyst did not render an actual evidence-cited conversation answer.");
         var text = AllText();
         Assert(text.Contains("Evidence", StringComparison.OrdinalIgnoreCase), "The analyst answer does not identify evidence sources.");
         Assert(text.Contains("Inference", StringComparison.OrdinalIgnoreCase), "The analyst answer does not distinguish inference.");
@@ -329,6 +348,15 @@ internal sealed class DesktopAcceptance(Options options)
         Assert(text.Contains("Preview", StringComparison.OrdinalIgnoreCase), "Reports has no live evidence-based preview.");
         Assert(text.Contains("PDF", StringComparison.OrdinalIgnoreCase), "Report Studio has no PDF export control.");
         Assert(Descendants(_root).OfType<CheckBox>().Any(), "Report Studio has no configuration controls.");
+        var reportType = FindCombo("Report types");
+        Assert(reportType.Items.Count == 7, "Report Studio does not preserve all seven report kinds.");
+        var scope = FindCombo("Report scope");
+        scope.SelectedItem = scope.Items.Cast<object>().Single(item => ItemText(item) == "Servers");
+        await WaitUntil(() => AllText().Contains("12 assets", StringComparison.Ordinal) && AllText().Contains("Preview generated by the reporting engine", StringComparison.Ordinal),
+            "Report Studio scope selection did not generate its real 12-server evidence preview.");
+        reportType.SelectedIndex = 1;
+        await WaitUntil(() => AllText().Contains("Technical", StringComparison.OrdinalIgnoreCase) && AllText().Contains("Preview generated by the reporting engine", StringComparison.Ordinal),
+            "Report Studio type selection did not generate the actual technical preview.");
         var pdf = Path.Combine(options.EvidenceDirectory, "executive-demo.pdf");
         var json = Path.Combine(options.EvidenceDirectory, "technical-demo.json");
         // Execute the same coordinator export used by the production button; avoid automating
@@ -373,6 +401,31 @@ internal sealed class DesktopAcceptance(Options options)
         await SetViewport(1920, 1080, 1);
     });
 
+    private async Task CheckReportScopeIsolation() => await Check("Report-Studio-scope-cloning-reference-integrity-and-history-honesty", () =>
+    {
+        var coordinator = _window.GetType().GetField("_coordinator", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_window)!;
+        var source = Get(coordinator, "Current")!;
+        var sourceJson = JsonSerializer.Serialize(source, source.GetType());
+        var transform = _window.GetType().GetMethod("BuildResponseReportSnapshot", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var copy = transform.Invoke(null, [source, "Servers", null, null])!;
+        var assets = ((System.Collections.IEnumerable)Get(copy, "Assets")!).Cast<object>().ToList();
+        Assert(assets.Count == 12 && assets.All(asset => Get(asset, "Kind")!.ToString() == "Server"), "The report scope did not select the actual 12-server inventory.");
+        var assetIds = assets.Select(asset => (string)Get(asset, "Id")!).ToHashSet(StringComparer.Ordinal);
+        var nodes = ((System.Collections.IEnumerable)Get(copy, "Nodes")!).Cast<object>().Select(node => (string)Get(node, "Id")!).ToHashSet(StringComparer.Ordinal);
+        Assert(((System.Collections.IEnumerable)Get(copy, "Findings")!).Cast<object>().All(finding =>
+            ((IEnumerable<string>)Get(finding, "AssetIds")!).All(assetIds.Contains)), "A scoped report finding retained an out-of-scope asset reference.");
+        Assert(((System.Collections.IEnumerable)Get(copy, "Edges")!).Cast<object>().All(edge =>
+            nodes.Contains((string)Get(edge, "SourceId")!) && nodes.Contains((string)Get(edge, "TargetId")!)), "A scoped report graph retained dangling relationships.");
+        Assert(((System.Collections.IEnumerable)Get(copy, "ScoreHistory")!).Cast<object>().Count() == 0 &&
+            ((System.Collections.IEnumerable)Get(copy, "Scans")!).Cast<object>().Count() == 0, "Global assessment history was incorrectly relabeled as scoped report coverage.");
+        Set(assets[0], "Owner", "Isolated report copy only");
+        Assert(JsonSerializer.Serialize(source, source.GetType()) == sourceJson, "Report scope transformation or clone mutation changed the authoritative evidence snapshot.");
+        var future = transform.Invoke(null, [source, "Entire environment", (DateTimeOffset?)DateTimeOffset.UtcNow.AddDays(1), null])!;
+        Assert(((System.Collections.IEnumerable)Get(future, "Assets")!).Cast<object>().Count() == _snapshot.GetProperty("Assets").GetArrayLength(), "History filtering incorrectly deleted current posture inventory.");
+        Assert(((System.Collections.IEnumerable)Get(future, "ScoreHistory")!).Cast<object>().Count() == 0, "History date-range filtering did not honor the selected range.");
+        return Task.CompletedTask;
+    });
+
     private async Task CheckPlanningMetadata() => await Check("Desktop-planning-metadata-environment-isolation-atomic-persistence-and-verified-rejection", async () =>
     {
         var storeType = _desktopAssembly.GetType("Sentinel.Desktop.DesktopWorkflowStore", throwOnError: true)!;
@@ -381,8 +434,9 @@ internal sealed class DesktopAcceptance(Options options)
         object NewStore() => Activator.CreateInstance(storeType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [directory], null)!;
         var store = NewStore();
         await ReflectTask(store, "LoadAsync", "qa-demo", CancellationToken.None);
-        var plan = Activator.CreateInstance(planType)!;
+        var plan = Activator.CreateInstance(planType, nonPublic: true)!;
         Set(plan, "ActionId", "qa-action"); Set(plan, "Title", "Offline defensive planning regression");
+        Set(plan, "EnvironmentId", "qa-demo");
         Set(plan, "Owner", "QA owner"); Set(plan, "Status", "Planned");
         Set(plan, "ModeledRiskReduction", 25d); Set(plan, "Confidence", .85d);
         var actualRiskBefore = ProbeProperty<string>("AnalyticsJsonForTesting");
@@ -400,6 +454,9 @@ internal sealed class DesktopAcceptance(Options options)
         Assert((string)Get(Reflect(reopened, "GetPlan", "qa-action")!, "Owner")! == "QA owner", "Read-only planning access leaked a mutable stored object.");
         await ReflectTask(reopened, "LoadAsync", "qa-live", CancellationToken.None);
         Assert(Reflect(reopened, "GetPlan", "qa-action") is null && !(bool)Reflect(reopened, "IsUnderReview", "qa-finding")!, "Demo planning/review metadata leaked into Live.");
+        try { await ReflectTask(reopened, "SavePlanAsync", plan, CancellationToken.None); throw new InvalidOperationException("A stale Demo action was accepted after switching to Live."); }
+        catch (InvalidOperationException exception) when (exception.Message.Contains("environment changed", StringComparison.OrdinalIgnoreCase)) { }
+        Assert(Directory.EnumerateFiles(Path.Combine(directory, "Workflows"), "*.v1.json").Count() == 1 && File.ReadAllBytes(file).SequenceEqual(bytesBefore), "An environment-mismatched plan created or modified persisted workflow evidence.");
         await ReflectTask(reopened, "LoadAsync", "qa-demo", CancellationToken.None);
         using (var cancellation = new CancellationTokenSource())
         {
@@ -456,6 +513,69 @@ internal sealed class DesktopAcceptance(Options options)
         return Task.CompletedTask;
     });
 
+    private async Task CheckRemediationWorkflow() => await Check("Remediation-real-planning-controls-persist-without-reducing-evidence-risk", async () =>
+    {
+        await Navigate("Remediation");
+        var details = Descendants(PageRoot()).OfType<Expander>().FirstOrDefault(expander => AccessibleText(expander).Contains("Review remediation:", StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException("The remediation workspace has no accessible action review drawer.");
+        details.IsExpanded = true;
+        await Flush();
+        var status = FindCombo("Remediation planning status");
+        status.SelectedItem = status.Items.Cast<object>().First(item => ItemText(item) == "Planned");
+        FindTextBox("Remediation owner").Text = "QA defensive owner";
+        FindTextBox("Remediation planning note").Text = "Plan recorded by offline installed-application acceptance; awaiting a new authorized verification assessment.";
+        var riskBefore = ProbeProperty<string>("AnalyticsJsonForTesting");
+        var evidenceBefore = ProbeProperty<string>("SnapshotJsonForTesting");
+        InvokeButton(FindButton("Save remediation plan"));
+        var workflow = _window.GetType().GetField("_workflow", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_window)!;
+        await WaitUntil(() => ((System.Collections.IEnumerable)Get(workflow, "Plans")!).Cast<object>()
+            .Any(plan => (string)Get(plan, "Owner")! == "QA defensive owner" && (string)Get(plan, "Status")! == "Planned"),
+            "The real remediation controls did not persist their planning state.");
+        Assert(ProbeProperty<string>("SnapshotJsonForTesting") == evidenceBefore, "Planning controls changed authoritative finding evidence or disposition.");
+        Assert(ProbeProperty<string>("AnalyticsJsonForTesting") == riskBefore, "Planning controls lowered evidence-derived risk before verification.");
+        await Flush();
+        details = Descendants(PageRoot()).OfType<Expander>().First(expander => AccessibleText(expander).Contains("Review remediation:", StringComparison.OrdinalIgnoreCase));
+        details.IsExpanded = true;
+        await Flush();
+        Assert(AllText().Contains("Unresolved evidence", StringComparison.OrdinalIgnoreCase), "A planned action did not retain its unresolved verification state.");
+        await CaptureInteraction("Remediation-planned-awaiting-evidence", "Dark");
+    });
+
+    private async Task CheckAuthorizedScopeDialog() => await Check("Authorized-scope-dialog-refuses-unconfirmed-assessment-and-renders-both-themes", async () =>
+    {
+        var coordinator = _window.GetType().GetField("_coordinator", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_window)!;
+        var engines = Get(coordinator, "Engines")!;
+        var type = _desktopAssembly.GetType("Sentinel.Desktop.AuthorizedScopeDialog", throwOnError: true)!;
+        var evidenceBefore = ProbeProperty<string>("SnapshotJsonForTesting");
+        var mainRoot = _root;
+        foreach (var theme in new[] { "Dark", "Light" })
+        {
+            Probe("ApplyThemeForTesting", theme);
+            var dialog = (Window)Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [engines], null)!;
+            dialog.Owner = _window;
+            try
+            {
+                dialog.Show();
+                _root = (FrameworkElement)dialog.Content;
+                await Flush();
+                var start = FindButton("Authorize and start assessment");
+                InvokeButton(start);
+                await Flush();
+                Assert(Get(dialog, "Scope") is null, "Unconfirmed UI consent produced an authorized scan scope.");
+                Assert(AllText().Contains("Confirm that you are authorized", StringComparison.OrdinalIgnoreCase), "The unconfirmed scope did not produce a readable authorization error.");
+                var width = (int)Math.Ceiling(_root.ActualWidth);
+                var height = (int)Math.Ceiling(_root.ActualHeight);
+                var path = Path.Combine(options.EvidenceDirectory, "screenshots", "authorized-scope-" + theme.ToLowerInvariant() + ".png");
+                var render = Capture(path, "Authorized scope dialog", theme, width, height, 1);
+                _renders.Add(render);
+                Assert(render.Errors.Count == 0, "The rendered authorization dialog has layout/accessibility errors: " + string.Join("; ", render.Errors.Take(8)));
+            }
+            finally { dialog.Close(); _root = mainRoot; }
+        }
+        Assert(ProbeProperty<string>("SnapshotJsonForTesting") == evidenceBefore, "Unauthorized dialog interaction committed assessment evidence.");
+        Probe("ApplyThemeForTesting", "Dark");
+    });
+
     private async Task CheckReadableFailure() => await Check("Desktop-readable-error-correlation-and-no-normal-stack-trace", async () =>
     {
         await Navigate("Settings");
@@ -472,8 +592,8 @@ internal sealed class DesktopAcceptance(Options options)
 
     private async Task RenderMatrix()
     {
-        var resolutions = options.Quick ? [(1366, 768)] : Resolutions;
-        var scales = options.Quick ? [1d] : Scales;
+        (int Width, int Height)[] resolutions = options.Quick ? [(1366, 768)] : Resolutions;
+        double[] scales = options.Quick ? [1d] : Scales;
         foreach (var theme in new[] { "Dark", "Light" })
         {
             Probe("ApplyThemeForTesting", theme);
@@ -539,7 +659,9 @@ internal sealed class DesktopAcceptance(Options options)
     {
         await Flush();
         var path = Path.Combine(options.EvidenceDirectory, "screenshots", name + ".png");
-        _renders.Add(Capture(path, name, theme, (int)Math.Round(_root.ActualWidth), (int)Math.Round(_root.ActualHeight), 1));
+        var render = Capture(path, name, theme, (int)Math.Round(_root.ActualWidth), (int)Math.Round(_root.ActualHeight), 1);
+        _renders.Add(render);
+        Assert(render.Errors.Count == 0, "The actual interaction screenshot has layout/accessibility errors: " + string.Join("; ", render.Errors.Take(8)));
     }
 
     private RenderResult Capture(string path, string route, string theme, int physicalWidth, int physicalHeight, double scale)
@@ -578,8 +700,19 @@ internal sealed class DesktopAcceptance(Options options)
             var control = element as Control;
             if (control is Button or TextBox or ComboBox && control.IsEnabled && string.IsNullOrWhiteSpace(label))
                 errors.Add($"Interactive {control.GetType().Name} is missing an accessible label.");
+            double? contrast = null;
+            if (element is TextBlock contrastText && contrastText.IsEnabled && !string.IsNullOrWhiteSpace(contrastText.Text) &&
+                contrastText.Foreground is SolidColorBrush foreground && foreground.Color.A == 255 && foreground.Opacity >= .999 &&
+                NearestBackground(contrastText) is Color background)
+            {
+                var a = Luminance(foreground.Color);
+                var b = Luminance(background);
+                contrast = (Math.Max(a, b) + .05) / (Math.Min(a, b) + .05);
+                var minimum = contrastText.FontSize >= 24 || (contrastText.FontSize >= 18.66 && contrastText.FontWeight.ToOpenTypeWeight() >= 600) ? 3 : 4.5;
+                if (contrast < minimum - .02) errors.Add($"Rendered text contrast below {minimum:0.#}:1: '{Limit(contrastText.Text)}' ({contrast:0.##}:1).");
+            }
             diagnostics.Add(new(element.GetType().Name, Limit(label), bounds.X, bounds.Y, bounds.Width, bounds.Height, fontSize,
-                AutomationProperties.GetAutomationId(element), element.IsKeyboardFocused));
+                AutomationProperties.GetAutomationId(element), element.IsKeyboardFocused, contrast));
         }
         return new(route, theme, physicalWidth, physicalHeight, scale,
             "simulated-effective-display-scaling; native window DPI recorded separately",
@@ -665,6 +798,11 @@ internal sealed class DesktopAcceptance(Options options)
     {
         var name = AutomationProperties.GetName(element);
         if (!string.IsNullOrWhiteSpace(name)) return name;
+        if (AutomationProperties.GetLabeledBy(element) is FrameworkElement label && !ReferenceEquals(label, element))
+        {
+            var labelText = AccessibleText(label);
+            if (!string.IsNullOrWhiteSpace(labelText)) return labelText;
+        }
         if (element is TextBlock text) return text.Text;
         if (element is ContentControl content)
         {
@@ -698,7 +836,15 @@ internal sealed class DesktopAcceptance(Options options)
     }
     private static object? Reflect(object target, string method, params object[] arguments)
     {
-        try { return target.GetType().GetMethod(method, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!.Invoke(target, arguments); }
+        var info = target.GetType().GetMethod(method, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!;
+        var parameters = info.GetParameters();
+        if (arguments.Length < parameters.Length)
+        {
+            if (parameters.Skip(arguments.Length).Any(parameter => !parameter.HasDefaultValue))
+                throw new ArgumentException("Required reflection test argument missing: " + method);
+            arguments = arguments.Concat(parameters.Skip(arguments.Length).Select(parameter => parameter.DefaultValue!)).ToArray();
+        }
+        try { return info.Invoke(target, arguments); }
         catch (TargetInvocationException exception) when (exception.InnerException is not null) { throw exception.InnerException; }
     }
     private static async Task ReflectTask(object target, string method, params object[] arguments)
@@ -799,12 +945,21 @@ internal sealed class DesktopAcceptance(Options options)
         static double Channel(byte channel) { var value = channel / 255d; return value <= .04045 ? value / 12.92 : Math.Pow((value + .055) / 1.055, 2.4); }
         return .2126 * Channel(color.R) + .7152 * Channel(color.G) + .0722 * Channel(color.B);
     }
+    private static Color? NearestBackground(DependencyObject element)
+    {
+        for (DependencyObject? ancestor = element; ancestor is not null; ancestor = VisualTreeHelper.GetParent(ancestor))
+        {
+            var brush = ancestor switch { Border border => border.Background, Panel panel => panel.Background, Control control => control.Background, _ => null };
+            if (brush is SolidColorBrush solid && solid.Color.A == 255 && solid.Opacity >= .999) return solid.Color;
+        }
+        return Application.Current.Resources["BackgroundBrush"] is SolidColorBrush fallback ? fallback.Color : null;
+    }
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr window);
 }
 
 internal sealed record CheckResult(string Name, string Status, string Details, long ElapsedMilliseconds);
-internal sealed record ControlDiagnostic(string Type, string Label, double X, double Y, double Width, double Height, double FontSize, string AutomationId, bool KeyboardFocused);
+internal sealed record ControlDiagnostic(string Type, string Label, double X, double Y, double Width, double Height, double FontSize, string AutomationId, bool KeyboardFocused, double? ContrastRatio);
 internal sealed record RenderResult(string Route, string Theme, int PixelWidth, int PixelHeight, double EffectiveScale,
     string ScalingEvidence, double LogicalWidth, double LogicalHeight, string File, long Bytes, string Sha256,
     IReadOnlyList<ControlDiagnostic> Controls, IReadOnlyList<string> Errors);

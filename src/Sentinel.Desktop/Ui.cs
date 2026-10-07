@@ -130,7 +130,7 @@ internal static class Ui
     public static ComboBox Select<T>(IEnumerable<T> values, T selected)
     {
         var combo = new ComboBox { ItemsSource = values.ToArray(), SelectedItem = selected };
-        AutomationProperties.SetName(combo, selected?.ToString() ?? typeof(T).Name);
+        AutomationProperties.SetName(combo, selected is null ? typeof(T).Name : selected.ToString() ?? typeof(T).Name);
         return combo;
     }
     public static DataGrid Table(IEnumerable source, params (string Heading, string Path, double Width)[] columns)

@@ -68,6 +68,8 @@ public partial class MainWindow : Window
     {
         await _coordinator.OpenAsync(mode);
         await _workflow.LoadAsync(Snapshot.Id);
+        Navigation.IsEnabled = true;
+        ScanButton.IsEnabled = true;
         _settings.LastEnvironment = mode;
         await _coordinator.SaveSettingsAsync(_settings);
         OrganizationText.Text = mode == EnvironmentMode.Demo ? "Northstar Industries" : Snapshot.Name;
@@ -81,6 +83,13 @@ public partial class MainWindow : Window
 
     private void ShowEnvironmentChoice()
     {
+        Navigation.IsEnabled = false;
+        ScanButton.IsEnabled = false;
+        ModeText.Text = "SELECT";
+        OrganizationText.Text = "Choose an environment";
+        EnvironmentContextText.Text = "Separate local evidence workspaces";
+        AssessmentText.Text = "No assessment is started by selection";
+        PageContextText.Text = "";
         PageTitle.Text = "Welcome to SENTINEL";
         PageSubtitle.Text = "Evidence, context, and a clear order of action.";
         PageContent.Children.Clear();
@@ -141,8 +150,11 @@ public partial class MainWindow : Window
     private void RenderIntegrations()
     {
         PageContent.Children.Add(Ui.Card(Ui.Stack(Ui.Text("Extensible engines and connectors", 22, bold: true), Ui.Text("Assessment engines and provider connectors use versioned typed contracts. Connector implementations must declare required permissions, authenticate through official APIs, and store secrets with Windows protected storage. Imported evidence retains its source.", brush: "MutedBrush"))));
-        foreach (var engine in _coordinator.Engines) PageContent.Children.Add(Ui.Card(Ui.Stack(Ui.Text(engine.Name, 18, bold: true), Ui.Text(engine.Description), Ui.Text(engine.IsAvailable ? "Available · explicit authorization and scope required" : "Unavailable · " + engine.AvailabilityReason, 12, engine.IsAvailable ? "AccentBrush" : "MutedBrush")), 16));
-        foreach (var connector in new ConnectorRegistry().Descriptors) PageContent.Children.Add(Ui.Card(Ui.Stack(Ui.Text(connector.Name, 18, bold: true), Ui.Text(connector.Status, 12, "MutedBrush"), Ui.Text("Least-privilege permissions: " + string.Join("; ", connector.RequiredPermissions), 13), Ui.Text(connector.DocumentationUrl, 12, "MutedBrush")), 16));
+        var engineCards = _coordinator.Engines.Select(engine => (UIElement)Ui.Card(Ui.Stack(Ui.Toolbar(Ui.Icon(engine.Name, 20), Ui.Text(engine.Name, 17, bold: true)), Ui.Badge(engine.IsAvailable ? "Available · authorized scope required" : "Unavailable", engine.IsAvailable ? "SuccessBrush" : "MutedBrush"), Ui.Text(engine.Description), Ui.Text(engine.IsAvailable ? "On-demand collection" : engine.AvailabilityReason, 12, "MutedBrush")), 20)).ToList();
+        for (var i = 0; i < engineCards.Count; i += 2) PageContent.Children.Add(Ui.Columns(engineCards.Skip(i).Take(2).ToArray()));
+        var connectorCards = new ConnectorRegistry().Descriptors.Select(connector => (UIElement)Ui.Card(Ui.Stack(Ui.Toolbar(Ui.Icon("Cloud", 20), Ui.Text(connector.Name, 17, bold: true)), Ui.Badge("Connector contract · not connected"), Ui.Text(connector.Status, 14, "MutedBrush"), Ui.Text("Least-privilege permissions: " + string.Join("; ", connector.RequiredPermissions), 13), Ui.Text(connector.DocumentationUrl, 12, "MutedBrush")), 20)).ToList();
+        PageContent.Children.Add(Ui.Section("Provider and future integrations", "Availability is declared honestly; imported evidence does not create an API connection."));
+        for (var i = 0; i < connectorCards.Count; i += 2) PageContent.Children.Add(Ui.Columns(connectorCards.Skip(i).Take(2).ToArray()));
         var source = Ui.Select(new[] { "azure", "m365", "aws", "gcp", "ad", "vulnerability-intel" }, "azure");
         var organization = Ui.Input(); organization.ToolTip = "Exact tenant, account, or organization ID from the export";
         var operatorName = Ui.Input(Environment.UserName); operatorName.ToolTip = "Authorizing operator";
@@ -168,7 +180,7 @@ public partial class MainWindow : Window
         {
             _settings.Theme = theme.SelectedItem?.ToString() ?? "System";
             ThemeManager.Apply(_settings.Theme);
-            await _coordinator.SaveSettingsAsync(_settings);
+        await _coordinator.SaveSettingsAsync(_settings);
         });
         var retention = Ui.Input(_settings.RetentionDays.ToString(), 150);
         var save = Ui.Button("Save preferences", () => _ = GuardAsync(async () =>

@@ -15,7 +15,9 @@ internal sealed class EvidenceGraphView : StackPanel
     private const int NodeLimit = 28;
     private const int EdgeLimit = 42;
     private const double NodeWidth = 204;
-    private const double NodeHeight = 96;
+    private const double NodeHeight = 108;
+    private const double ClusterWidth = 180;
+    private const double ClusterHeight = 88;
     private readonly EnvironmentSnapshot _snapshot;
     private readonly IReadOnlyList<AttackPath> _paths;
     private readonly RiskAssessment? _risk;
@@ -31,10 +33,11 @@ internal sealed class EvidenceGraphView : StackPanel
     private readonly StackPanel _detail = new();
     private readonly TextBlock _count = Ui.Text("", 12, "MutedBrush");
     private readonly TextBlock _zoom = Ui.Text("100%", 12, "MutedBrush");
-    private readonly TextBox _search = Ui.Input(width: 240);
+    private readonly TextBox _search = Ui.Search("Search node", 280);
     private readonly ComboBox _kind;
     private readonly ComboBox _relationship;
     private readonly ComboBox _pathChoice;
+    private readonly Button _focusButton;
     private readonly Grid _layout = new();
     private readonly Border _graphHost;
     private readonly Border _inspector;
@@ -49,6 +52,7 @@ internal sealed class EvidenceGraphView : StackPanel
     private Point? _drag;
     private string? _focusId;
     private string? _selectedId;
+    private string? _selectedEdgeId;
     private AttackPath? _highlightedPath;
     private bool _ready;
     private bool _ignoreFilters;
@@ -74,25 +78,18 @@ internal sealed class EvidenceGraphView : StackPanel
         _kind.MaxWidth = 190;
         _relationship.MaxWidth = 220;
         _pathChoice.MaxWidth = 300;
-        SetName(_search, "GraphSearch", "Search evidence node labels or identifiers");
+        SetName(_search, "GraphSearch", "Search node");
         SetName(_kind, "GraphNodeType", "Filter evidence node type");
         SetName(_relationship, "GraphRelationship", "Filter evidence relationship");
         SetName(_pathChoice, "GraphAttackPath", "Highlight a defensive attack path");
         _search.ToolTip = "Search recorded node labels and IDs. Matches include their immediate evidence neighbors.";
         Children.Add(Ui.Text("Explore the evidence behind exposure", 20, bold: true));
         Children.Add(Ui.Text("Start with a type cluster, find a record, or highlight a modeled path. Every relationship shown comes from collected evidence.", 14, "MutedBrush"));
-        var searchFrame = new Grid { Width = 280, Margin = new Thickness(0, 0, 8, 8) };
-        searchFrame.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
-        searchFrame.ColumnDefinitions.Add(new ColumnDefinition());
-        var searchIcon = Ui.Icon("search", 18);
-        searchIcon.VerticalAlignment = VerticalAlignment.Center;
-        searchFrame.Children.Add(searchIcon);
-        _search.Margin = new Thickness(0);
-        Grid.SetColumn(_search, 1);
-        searchFrame.Children.Add(_search);
-        Children.Add(Wrap(searchFrame, _kind, _relationship, _pathChoice));
+        Children.Add(Wrap(_search, _kind, _relationship, _pathChoice));
+        _focusButton = Tool("Focus selected", "focus", FocusSelected, "GraphFocus");
+        _focusButton.IsEnabled = false;
         Children.Add(Wrap(
-            Tool("Focus selected", "focus", FocusSelected, "GraphFocus"),
+            _focusButton,
             Tool("Fit graph", "fit", Fit, "GraphFit"),
             Tool("Reset view", "reset", Reset, "GraphReset"),
             Tool("Zoom in", "zoom-in", () => Zoom(1.15), "GraphZoomIn"),
@@ -116,11 +113,11 @@ internal sealed class EvidenceGraphView : StackPanel
         _layout.Children.Add(_inspector);
         Children.Add(_layout);
         Children.Add(Legend());
-        Children.Add(Ui.Text("Overview clusters summarize recorded nodes. Expanded views render up to 28 nodes and 42 relationships; omitted evidence stays available through the Inspector and structured reports. Drag empty graph space to pan. Use the wheel to zoom.", 12, "MutedBrush"));
+        Children.Add(Ui.Text("Overview clusters summarize recorded nodes. Expanded views render up to 28 nodes and 42 relationships; omitted evidence stays available through the Inspector and structured reports. Automatic framing preserves readable labels. Use Fit graph for the entire layout, drag empty space to pan, or use the wheel to zoom.", 12, "MutedBrush"));
 
         _search.TextChanged += (_, _) => { _searchDelay.Stop(); _searchDelay.Start(); };
-        _searchDelay.Tick += (_, _) => { _searchDelay.Stop(); if (_ready && !_ignoreFilters) { _focusId = null; _highlightedPath = null; ClearPathChoice(); Draw(); } };
-        _kind.SelectionChanged += (_, _) => { if (_ready && !_ignoreFilters) { _focusId = null; _highlightedPath = null; ClearPathChoice(); Draw(); } };
+        _searchDelay.Tick += (_, _) => { _searchDelay.Stop(); if (_ready && !_ignoreFilters) { _focusId = null; _selectedId = null; _selectedEdgeId = null; _highlightedPath = null; ClearPathChoice(); Draw(); } };
+        _kind.SelectionChanged += (_, _) => { if (_ready && !_ignoreFilters) { _focusId = null; _selectedId = null; _selectedEdgeId = null; _highlightedPath = null; ClearPathChoice(); Draw(); } };
         _relationship.SelectionChanged += (_, _) => { if (_ready && !_ignoreFilters) Draw(); };
         _pathChoice.SelectionChanged += (_, _) =>
         {
@@ -169,10 +166,10 @@ internal sealed class EvidenceGraphView : StackPanel
         _viewport.SizeChanged += (_, _) =>
         {
             var columns = Columns();
-            if (_ready && columns != _lastColumns) { Draw(); Fit(); }
+            if (_ready && columns != _lastColumns) { Draw(); FrameReadable(); }
             else UpdateMinimap();
         };
-        Loaded += (_, _) => { AdaptLayout(); Draw(); Fit(); };
+        Loaded += (_, _) => { AdaptLayout(); Draw(); FrameReadable(); };
         Unloaded += (_, _) => _searchDelay.Stop();
         _ready = true;
         Draw();
@@ -187,6 +184,7 @@ internal sealed class EvidenceGraphView : StackPanel
     {
         if (!_nodes.TryGetValue(id, out var node)) return;
         _focusId = id;
+        _selectedEdgeId = null;
         _highlightedPath = null;
         _ignoreFilters = true;
         _search.Text = "";
@@ -197,13 +195,15 @@ internal sealed class EvidenceGraphView : StackPanel
         _searchDelay.Stop();
         Draw();
         SelectNode(node);
-        Fit();
+        FrameReadable();
     }
 
     public void HighlightPath(AttackPath path)
     {
         _highlightedPath = path;
         _focusId = null;
+        _selectedId = null;
+        _selectedEdgeId = null;
         _ignoreFilters = true;
         _search.Text = "";
         _kind.SelectedIndex = 0;
@@ -213,6 +213,13 @@ internal sealed class EvidenceGraphView : StackPanel
         _ignoreFilters = false;
         _searchDelay.Stop();
         Draw();
+        ShowPathInspector(path);
+        FrameReadable();
+    }
+
+    private void ShowPathInspector(AttackPath path)
+    {
+        _focusButton.IsEnabled = false;
         _detail.Children.Clear();
         _detail.Children.Add(Ui.Text("Highlighted defensive path", 18, bold: true));
         _detail.Children.Add(Ui.Text(path.Title, 15, bold: true));
@@ -221,7 +228,6 @@ internal sealed class EvidenceGraphView : StackPanel
         _detail.Children.Add(Ui.Text(path.RecommendedAction, 14));
         if (_openPath is not null) _detail.Children.Add(Ui.Button("Review this path", () => _openPath(path), true));
         _detail.Children.Add(Ui.Text("A modeled chain is an inference from evidence. It does not establish exploit success, and SENTINEL does not execute it.", 12, "MutedBrush"));
-        Fit();
     }
 
     private void Draw()
@@ -239,6 +245,8 @@ internal sealed class EvidenceGraphView : StackPanel
         if (IsClusterOverview) DrawClusters();
         else DrawRecords(term, allKinds, allRelationships);
         if (_selectedId is not null && _nodes.TryGetValue(_selectedId, out var selected)) SelectNode(selected);
+        else if (_selectedEdgeId is not null && _edges.TryGetValue(_selectedEdgeId, out var selectedEdge)) SelectEdge(selectedEdge);
+        else if (_highlightedPath is not null) ShowPathInspector(_highlightedPath);
         else ShowInspectorHelp();
         ApplyTransform();
     }
@@ -246,14 +254,14 @@ internal sealed class EvidenceGraphView : StackPanel
     private void DrawClusters()
     {
         var groups = _nodes.Values.GroupBy(n => n.Kind).OrderBy(g => EvidenceNodePresentation.Order(g.Key)).ToList();
-        var positions = Positions(groups.Count);
+        var positions = Positions(groups.Count, clusters: true);
         var kindPositions = groups.Select((g, i) => (g.Key, Position: positions[i])).ToDictionary(x => x.Key, x => x.Position);
         var aggregate = _edges.Values.GroupBy(e => (_nodes[e.SourceId].Kind, _nodes[e.TargetId].Kind)).Where(g => g.Key.Item1 != g.Key.Item2)
             .OrderByDescending(g => g.Any(e => e.EnablesPath)).ThenByDescending(g => g.Count()).Take(26).ToList();
         foreach (var group in aggregate)
         {
             var realEdges = group.ToList();
-            var line = RelationshipLine(kindPositions[group.Key.Item1], kindPositions[group.Key.Item2], realEdges.Any(e => e.EnablesPath));
+            var line = RelationshipLine(kindPositions[group.Key.Item1], kindPositions[group.Key.Item2], realEdges.Any(e => e.EnablesPath), ClusterWidth, ClusterHeight);
             line.ToolTip = $"{EvidenceNodePresentation.Label(group.Key.Item1)} → {EvidenceNodePresentation.Label(group.Key.Item2)}\n{realEdges.Count} recorded relationships";
             line.MouseLeftButtonDown += (_, e) => { InspectClusterRelationship(group.Key.Item1, group.Key.Item2, realEdges); e.Handled = true; };
             AutomationProperties.SetName(line, EvidenceNodePresentation.Label(group.Key.Item1) + " to " + EvidenceNodePresentation.Label(group.Key.Item2) + " relationship group");
@@ -264,8 +272,8 @@ internal sealed class EvidenceGraphView : StackPanel
         {
             var group = groups[i];
             var button = Ui.Button("", () => InspectCluster(group.Key));
-            button.Width = NodeWidth;
-            button.Height = NodeHeight;
+            button.Width = ClusterWidth;
+            button.Height = ClusterHeight;
             button.Padding = new Thickness(12);
             button.HorizontalContentAlignment = HorizontalAlignment.Stretch;
             button.Content = NodeContent(group.Key, EvidenceNodePresentation.Label(group.Key), $"{group.Count():N0} recorded nodes", null);
@@ -362,15 +370,18 @@ internal sealed class EvidenceGraphView : StackPanel
         icon.Margin = new Thickness(0, 3, 6, 0);
         grid.Children.Add(icon);
         var title = Ui.Text(label, 14, bold: true);
-        title.MaxHeight = 32;
+        title.MaxHeight = node is null ? 32 : 40;
         title.TextTrimming = TextTrimming.CharacterEllipsis;
         title.Margin = new Thickness(0, 0, 0, 2);
-        var metadata = Ui.Text(meta, 12, "MutedBrush");
+        var metadata = Ui.Text(meta, 13.5, "MutedBrush");
         metadata.Margin = new Thickness(0);
+        metadata.TextWrapping = TextWrapping.NoWrap;
+        metadata.TextTrimming = TextTrimming.CharacterEllipsis;
+        metadata.ToolTip = meta;
         var text = Ui.Stack(title, metadata);
         if (node is not null)
         {
-            var type = Ui.Text(EvidenceNodePresentation.Label(kind), 12, EvidenceNodePresentation.Color(kind));
+            var type = Ui.Text(EvidenceNodePresentation.Label(kind), 13.5, EvidenceNodePresentation.Color(kind));
             type.Margin = new Thickness(0, 0, 0, 1);
             text.Children.Insert(0, type);
         }
@@ -382,6 +393,8 @@ internal sealed class EvidenceGraphView : StackPanel
     private void InspectCluster(EvidenceKind kind)
     {
         _selectedId = null;
+        _selectedEdgeId = null;
+        _focusButton.IsEnabled = false;
         _detail.Children.Clear();
         var records = _nodes.Values.Where(n => n.Kind == kind).OrderBy(n => n.Label, StringComparer.Ordinal).ToList();
         _detail.Children.Add(Ui.Icon(EvidenceNodePresentation.Icon(kind), 28, EvidenceNodePresentation.Color(kind)));
@@ -395,7 +408,7 @@ internal sealed class EvidenceGraphView : StackPanel
             _ignoreFilters = false;
             _searchDelay.Stop();
             Draw();
-            Fit();
+            FrameReadable();
         }, true));
         _detail.Children.Add(Ui.Text("Recorded nodes", 16, bold: true));
         foreach (var node in records.Take(20)) _detail.Children.Add(Ui.Button(node.Label, () => FocusNode(node.Id)));
@@ -405,6 +418,8 @@ internal sealed class EvidenceGraphView : StackPanel
     private void InspectClusterRelationship(EvidenceKind source, EvidenceKind target, IReadOnlyList<EvidenceEdge> edges)
     {
         _selectedId = null;
+        _selectedEdgeId = null;
+        _focusButton.IsEnabled = false;
         _detail.Children.Clear();
         _detail.Children.Add(Ui.Text("Relationship group", 18, bold: true));
         _detail.Children.Add(Ui.Text($"{EvidenceNodePresentation.Label(source)} → {EvidenceNodePresentation.Label(target)}", 15, bold: true));
@@ -417,6 +432,8 @@ internal sealed class EvidenceGraphView : StackPanel
     private void SelectNode(EvidenceNode node)
     {
         _selectedId = node.Id;
+        _selectedEdgeId = null;
+        _focusButton.IsEnabled = true;
         foreach (var pair in _buttons) pair.Value.SetResourceReference(Control.BorderBrushProperty, pair.Key == node.Id ? "AccentBrush" : "BorderBrush");
         foreach (var pair in _lines)
         {
@@ -455,13 +472,13 @@ internal sealed class EvidenceGraphView : StackPanel
         foreach (var path in paths.Take(8)) _detail.Children.Add(Ui.Button(path.Title, () => { if (_openPath is not null) _openPath(path); else HighlightPath(path); }));
         if (paths.Count == 0) _detail.Children.Add(Ui.Text("No currently modeled path references this evidence.", 12, "MutedBrush"));
         AddSection("Related evidence");
-        var adjacent = _edges.Values.Where(e => e.SourceId == node.Id || e.TargetId == node.Id).ToList();
-        foreach (var edge in adjacent.Take(14))
+        var connectedEdges = _edges.Values.Where(e => e.SourceId == node.Id || e.TargetId == node.Id).ToList();
+        foreach (var edge in connectedEdges.Take(14))
         {
             var other = _nodes[edge.SourceId == node.Id ? edge.TargetId : edge.SourceId];
             _detail.Children.Add(Ui.Button($"{edge.Relationship} · {other.Label}", () => SelectEdge(edge)));
         }
-        if (adjacent.Count > 14) _detail.Children.Add(Ui.Text($"{adjacent.Count - 14} further relationships exist. Use relationship filters to narrow the view.", 12, "MutedBrush"));
+        if (connectedEdges.Count > 14) _detail.Children.Add(Ui.Text($"{connectedEdges.Count - 14} further relationships exist. Use relationship filters to narrow the view.", 12, "MutedBrush"));
         AddSection("History");
         var changes = _snapshot.Changes.Where(c => c.EntityId == node.Id || assetIds.Contains(c.EntityId, StringComparer.Ordinal) || findings.Any(f => f.Id == c.EntityId)).OrderByDescending(c => c.At).Take(5).ToList();
         foreach (var change in changes) _detail.Children.Add(Ui.Text($"{change.At.LocalDateTime:g} · {change.Kind}\n{change.Summary}\nSource: {change.Source}", 12, "MutedBrush"));
@@ -472,6 +489,9 @@ internal sealed class EvidenceGraphView : StackPanel
     private void SelectEdge(EvidenceEdge edge)
     {
         _selectedId = null;
+        _selectedEdgeId = edge.Id;
+        _focusButton.IsEnabled = false;
+        foreach (var button in _buttons.Values) button.SetResourceReference(Control.BorderBrushProperty, "BorderBrush");
         foreach (var pair in _lines) { pair.Value.Opacity = pair.Key == edge.Id ? 1 : 0.2; pair.Value.StrokeThickness = pair.Key == edge.Id ? 4 : 1.5; }
         _detail.Children.Clear();
         _detail.Children.Add(Ui.Text(edge.Relationship, 19, bold: true));
@@ -538,6 +558,7 @@ internal sealed class EvidenceGraphView : StackPanel
 
     private void ShowInspectorHelp()
     {
+        _focusButton.IsEnabled = false;
         _detail.Children.Clear();
         _detail.Children.Add(Ui.Icon("graph", 28, "AccentBrush"));
         _detail.Children.Add(Ui.Text("Evidence Inspector", 19, bold: true));
@@ -546,36 +567,38 @@ internal sealed class EvidenceGraphView : StackPanel
         _detail.Children.Add(Ui.Text("Nodes and relationships are stored evidence. Defensive attack paths are calculated interpretations of explicitly enabling relationships. Neither establishes exploit success.", 13, "MutedBrush"));
     }
 
-    private List<Point> Positions(int count)
+    private List<Point> Positions(int count, bool clusters = false)
     {
+        var width = clusters ? ClusterWidth : NodeWidth;
+        var height = clusters ? ClusterHeight : NodeHeight;
+        var gapX = clusters ? 24.0 : 46.0;
+        var gapY = clusters ? 24.0 : 44.0;
         var columns = Columns();
         _lastColumns = columns;
-        var gapX = 46.0;
-        var gapY = 44.0;
-        _canvas.Width = Math.Max(_viewport.ActualWidth, columns * (NodeWidth + gapX) + 24);
-        _canvas.Height = Math.Max(560, Math.Ceiling(Math.Max(1, count) / (double)columns) * (NodeHeight + gapY) + 40);
-        return Enumerable.Range(0, count).Select(i => new Point(24 + i % columns * (NodeWidth + gapX), 24 + i / columns * (NodeHeight + gapY))).ToList();
+        _canvas.Width = Math.Max(_viewport.ActualWidth, columns * (width + gapX) + 24);
+        _canvas.Height = Math.Max(560, Math.Ceiling(Math.Max(1, count) / (double)columns) * (height + gapY) + 40);
+        return Enumerable.Range(0, count).Select(i => new Point(24 + i % columns * (width + gapX), 24 + i / columns * (height + gapY))).ToList();
     }
 
-    private int Columns() => Math.Clamp((int)Math.Floor((Math.Max(600, _viewport.ActualWidth) - 24) / (NodeWidth + 46)), 2, 5);
+    private int Columns() => Math.Clamp((int)Math.Floor((Math.Max(600, _viewport.ActualWidth) - 24) / (IsClusterOverview ? ClusterWidth + 24 : NodeWidth + 46)), 2, 5);
     private bool PathNode(string id) => _pathNodeIds.Contains(id);
     private void AddAt(UIElement child, Point point) { Canvas.SetLeft(child, point.X); Canvas.SetTop(child, point.Y); _canvas.Children.Add(child); }
 
-    private static System.Windows.Shapes.Path RelationshipLine(Point source, Point target, bool path)
+    private static System.Windows.Shapes.Path RelationshipLine(Point source, Point target, bool path, double width = NodeWidth, double height = NodeHeight)
     {
         Point from;
         Point to;
-        if (Math.Abs(source.X - target.X) > NodeWidth / 2)
+        if (Math.Abs(source.X - target.X) > width / 2)
         {
             var right = target.X > source.X;
-            from = new Point(source.X + (right ? NodeWidth : 0), source.Y + NodeHeight / 2);
-            to = new Point(target.X + (right ? 0 : NodeWidth), target.Y + NodeHeight / 2);
+            from = new Point(source.X + (right ? width : 0), source.Y + height / 2);
+            to = new Point(target.X + (right ? 0 : width), target.Y + height / 2);
         }
         else
         {
             var down = target.Y > source.Y;
-            from = new Point(source.X + NodeWidth / 2, source.Y + (down ? NodeHeight : 0));
-            to = new Point(target.X + NodeWidth / 2, target.Y + (down ? 0 : NodeHeight));
+            from = new Point(source.X + width / 2, source.Y + (down ? height : 0));
+            to = new Point(target.X + width / 2, target.Y + (down ? 0 : height));
         }
         var delta = to - from;
         var direction = delta.Length > 0 ? delta / delta.Length : new Vector(1, 0);
@@ -605,12 +628,14 @@ internal sealed class EvidenceGraphView : StackPanel
             item.Children.Add(Ui.Text(EvidenceNodePresentation.Label(kind), 12, "MutedBrush"));
             legend.Children.Add(item);
         }
+        legend.Children.Add(Ui.Badge("Path enabling relationship", "HighBrush"));
+        legend.Children.Add(Ui.Badge("Recorded relationship", "MutedBrush"));
         return legend;
     }
 
     private void AdaptLayout()
     {
-        var wide = ActualWidth >= 1050;
+        var wide = ActualWidth >= 1250;
         _layout.ColumnDefinitions.Clear();
         _layout.RowDefinitions.Clear();
         if (wide)
@@ -638,17 +663,20 @@ internal sealed class EvidenceGraphView : StackPanel
 
     private void Zoom(double factor, Point? center = null)
     {
-        var scale = Math.Clamp(_matrix.M11 * factor, 0.35, 2.5);
+        var scale = Math.Clamp(_matrix.M11 * factor, 0.1, 2.5);
         factor = scale / _matrix.M11;
         var p = center ?? new Point(_viewport.ActualWidth / 2, _viewport.ActualHeight / 2);
         _matrix.ScaleAt(factor, factor, p.X, p.Y);
         ApplyTransform();
     }
 
-    private void Fit()
+    private void Fit() => Fit(0.1);
+    private void FrameReadable() => Fit(0.9);
+
+    private void Fit(double minimumScale)
     {
         var width = Math.Max(600, _viewport.ActualWidth);
-        var scale = Math.Clamp(Math.Min((width - 24) / Math.Max(1, _canvas.Width), (_viewport.Height - 24) / Math.Max(1, _canvas.Height)), 0.35, 1.1);
+        var scale = Math.Clamp(Math.Min((width - 24) / Math.Max(1, _canvas.Width), (_viewport.Height - 24) / Math.Max(1, _canvas.Height)), minimumScale, 1.1);
         _matrix = new Matrix(scale, 0, 0, scale, 12, 12);
         ApplyTransform();
     }
@@ -658,6 +686,7 @@ internal sealed class EvidenceGraphView : StackPanel
         _searchDelay.Stop();
         _focusId = null;
         _selectedId = null;
+        _selectedEdgeId = null;
         _highlightedPath = null;
         _ignoreFilters = true;
         _search.Text = "";
@@ -665,8 +694,9 @@ internal sealed class EvidenceGraphView : StackPanel
         _relationship.SelectedIndex = 0;
         _pathChoice.SelectedIndex = 0;
         _ignoreFilters = false;
+        _searchDelay.Stop();
         Draw();
-        Fit();
+        FrameReadable();
     }
 
     private void FocusSelected() { if (_selectedId is not null) FocusNode(_selectedId); }
@@ -682,7 +712,7 @@ internal sealed class EvidenceGraphView : StackPanel
         var yScale = _minimap.Height / _canvas.Height;
         foreach (var point in _mapPoints)
         {
-            var dot = new Rectangle { Width = Math.Max(4, NodeWidth * xScale), Height = Math.Max(3, NodeHeight * yScale), RadiusX = 2, RadiusY = 2, IsHitTestVisible = false };
+            var dot = new Rectangle { Width = Math.Max(4, (IsClusterOverview ? ClusterWidth : NodeWidth) * xScale), Height = Math.Max(3, (IsClusterOverview ? ClusterHeight : NodeHeight) * yScale), RadiusX = 2, RadiusY = 2, IsHitTestVisible = false };
             dot.SetResourceReference(Shape.FillProperty, point.Color);
             Canvas.SetLeft(dot, point.Position.X * xScale);
             Canvas.SetTop(dot, point.Position.Y * yScale);
@@ -690,8 +720,8 @@ internal sealed class EvidenceGraphView : StackPanel
         }
         var frame = new Rectangle { Width = Math.Min(_minimap.Width, _viewport.ActualWidth / _matrix.M11 * xScale), Height = Math.Min(_minimap.Height, _viewport.Height / _matrix.M22 * yScale), StrokeThickness = 1.4, IsHitTestVisible = false };
         frame.SetResourceReference(Shape.StrokeProperty, "TextBrush");
-        Canvas.SetLeft(frame, Math.Clamp(-_matrix.OffsetX / _matrix.M11 * xScale, 0, _minimap.Width));
-        Canvas.SetTop(frame, Math.Clamp(-_matrix.OffsetY / _matrix.M22 * yScale, 0, _minimap.Height));
+        Canvas.SetLeft(frame, Math.Clamp(-_matrix.OffsetX / _matrix.M11 * xScale, 0, Math.Max(0, _minimap.Width - frame.Width)));
+        Canvas.SetTop(frame, Math.Clamp(-_matrix.OffsetY / _matrix.M22 * yScale, 0, Math.Max(0, _minimap.Height - frame.Height)));
         _minimap.Children.Add(frame);
     }
 
@@ -710,16 +740,7 @@ internal sealed class EvidenceGraphView : StackPanel
         return button;
     }
 
-    private static WrapPanel Wrap(params UIElement[] children)
-    {
-        var panel = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
-        foreach (var child in children)
-        {
-            if (child is FrameworkElement element && element.Margin == default) element.Margin = new Thickness(0, 0, 8, 8);
-            panel.Children.Add(child);
-        }
-        return panel;
-    }
+    private static WrapPanel Wrap(params UIElement[] children) => Ui.Toolbar(children);
 
     private static void SetName(DependencyObject element, string id, string name)
     {

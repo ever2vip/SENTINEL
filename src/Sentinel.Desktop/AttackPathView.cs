@@ -52,7 +52,8 @@ internal sealed class AttackPathView : StackPanel
         title.Margin = new Thickness(0, 0, 0, 12);
         Children.Add(title);
         var metrics = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
-        metrics.Children.Add(Ui.Badge($"Path risk {path.Risk:0.0} / 100", EvidenceNodePresentation.SeverityColor(severity)));
+        metrics.Children.Add(Ui.Badge($"Path risk {path.Risk:0.0} / 100", "AccentBrush"));
+        if (dependencies.Count > 0) metrics.Children.Add(Ui.Badge(severity + " finding dependency", EvidenceNodePresentation.SeverityColor(severity)));
         metrics.Children.Add(Ui.Badge($"Confidence {path.Confidence:P0}", "AccentBrush"));
         metrics.Children.Add(Ui.Badge($"{path.EdgeIds.Count} steps", "MutedBrush"));
         if (target is not null) metrics.Children.Add(Ui.Badge("Critical target · " + target.Name, "HighBrush"));
@@ -93,6 +94,8 @@ internal sealed class AttackPathView : StackPanel
         };
         DrawFlow();
     }
+
+    public void ShowBreakWorkspace() => _breakWorkspace.Visibility = Visibility.Visible;
 
     private void DrawFlow()
     {
@@ -185,7 +188,11 @@ internal sealed class AttackPathView : StackPanel
         _breakWorkspace.Children.Add(Ui.Text(_path.BreakPoint, 16, "AccentBrush", true));
         _breakWorkspace.Children.Add(Ui.Text(_path.RecommendedAction, 14));
         var routeEdges = _path.EdgeIds.Where(_edges.ContainsKey).Select(id => _edges[id]).ToList();
-        var selected = routeEdges.FirstOrDefault(e => _nodes.TryGetValue(e.SourceId, out var source) && _nodes.TryGetValue(e.TargetId, out var target) && source.Label + " → " + target.Label == _path.BreakPoint);
+        // Use the same monotonic severity ordering and earliest-step tie break as
+        // AttackPathEngine. Display labels need not be unique evidence identifiers.
+        var selected = routeEdges.Where(e => !string.IsNullOrWhiteSpace(e.DefensiveBreak))
+            .OrderByDescending(e => _snapshot.Findings.Where(f => e.FindingIds.Contains(f.Id, StringComparer.Ordinal)).Select(f => (int)f.Severity).DefaultIfEmpty(0).Max())
+            .ThenBy(e => routeEdges.IndexOf(e)).FirstOrDefault() ?? routeEdges.FirstOrDefault();
         _breakWorkspace.Children.Add(Ui.Text("Why this point was selected", 16, bold: true));
         _breakWorkspace.Children.Add(Ui.Text(selected is not null && !string.IsNullOrWhiteSpace(selected.DefensiveBreak)
             ? "The current path engine prioritizes a recorded defensive break on the relationship with the highest severity supporting finding; earlier steps break ties. This is a modeled recommendation, not proof that other controls are unnecessary."

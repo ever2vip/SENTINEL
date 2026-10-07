@@ -45,7 +45,7 @@ public partial class MainWindow
         {
             list.Children.Clear();
             var currentIds = actions.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
-            var plans = actions.Select(a => _workflow.GetPlan(a.Id) ?? RemediationPlan.FromAction(a, Snapshot))
+            var plans = actions.Select(CurrentActionPlan)
                 .Concat(saved.Where(p => !currentIds.Contains(p.ActionId))).ToList();
             var count = 0;
             foreach (var plan in plans)
@@ -114,7 +114,7 @@ public partial class MainWindow
         var save = Ui.Button("Save remediation plan", () => _ = GuardAsync(async () =>
         {
             if (string.IsNullOrWhiteSpace(note.Text)) throw new ArgumentException("Record an update note before saving the remediation plan.");
-            var candidate = _workflow.GetPlan(plan.ActionId) ?? plan;
+            var candidate = current is null ? _workflow.GetPlan(plan.ActionId) ?? plan : CurrentActionPlan(current);
             candidate.Status = editableStatus.SelectedItem?.ToString() ?? "Recommended";
             candidate.Owner = string.IsNullOrWhiteSpace(owner.Text) ? "Unassigned" : owner.Text.Trim();
             candidate.UpdatedAt = DateTimeOffset.UtcNow;
@@ -138,6 +138,16 @@ public partial class MainWindow
         AutomationProperties.SetName(expander, $"Review remediation: {plan.Title}");
         body.Children.Add(expander);
         return Ui.Card(body);
+    }
+
+    private RemediationPlan CurrentActionPlan(RemediationAction action)
+    {
+        var current = RemediationPlan.FromAction(action, Snapshot);
+        var saved = _workflow.GetPlan(action.Id);
+        if (saved is null) return current;
+        current.Status = saved.Status; current.Owner = saved.Owner; current.Notes = saved.Notes;
+        current.CreatedAt = saved.CreatedAt; current.UpdatedAt = saved.UpdatedAt;
+        return current;
     }
 
     private UIElement ActionSummary(RemediationAction action)
@@ -326,7 +336,8 @@ public partial class MainWindow
         AutomationProperties.SetName(type, "Report types");
         var scope = Ui.Select(new[] { "Entire environment", "Critical assets", "Endpoints", "Servers", "Network devices", "Cloud resources", "Web applications" }, "Entire environment");
         AutomationProperties.SetName(scope, "Report scope");
-        var format = Ui.Select(Enum.GetValues<ReportFormat>(), ReportFormat.Pdf);
+        var formats = Enum.GetValues<ReportFormat>().Select(f => new ReportExportFormat(f, f.ToString().ToUpperInvariant())).ToList();
+        var format = new ComboBox { ItemsSource = formats, DisplayMemberPath = "Title", SelectedItem = formats.Single(f => f.Format == ReportFormat.Pdf) };
         AutomationProperties.SetName(format, "Report export format");
         var history = Ui.Select(new[] { "All retained history", "Last 7 days", "Last 30 days", "Last 90 days", "Custom date range" }, "All retained history");
         AutomationProperties.SetName(history, "Report history date range");
@@ -337,6 +348,7 @@ public partial class MainWindow
         var result = Ui.Text("Choose a report and review its evidence-derived preview before export.", 12, "MutedBrush");
         var status = Ui.Text("Report preview is ready to generate.", 12, "MutedBrush");
         var inclusion = Ui.Stack(Ui.Text("Included by this report template", 15, bold: true));
+        var audience = Ui.Text("Audience: executive leadership", 12, "MutedBrush");
         void Inclusion(string label, bool enabled, string reason)
         {
             var check = new CheckBox { Content = label, IsChecked = enabled, IsEnabled = false, ToolTip = reason, Margin = new Thickness(0, 0, 0, 8) };
@@ -346,6 +358,12 @@ public partial class MainWindow
         {
             while (inclusion.Children.Count > 1) inclusion.Children.RemoveAt(1);
             var kind = ((ReportType)type.SelectedItem).Kind;
+            audience.Text = kind switch
+            {
+                ReportKind.Executive => "Audience: executive leadership", ReportKind.AssetInventory => "Audience: asset owners and operations",
+                ReportKind.Compliance => "Audience: governance and control owners", ReportKind.Remediation => "Audience: remediation owners",
+                ReportKind.SecurityProgress => "Audience: security leadership", _ => "Audience: technical security team"
+            };
             Inclusion("Charts", false, "Chart export is not supported by the existing reporting engine. The preview and export use evidence tables and narratives.");
             Inclusion("Attack paths", kind is ReportKind.Executive or ReportKind.Technical or ReportKind.Remediation, "Sections follow the selected engine template and cannot be independently toggled.");
             Inclusion("Asset details", kind is ReportKind.Technical or ReportKind.AssetInventory, "Sections follow the selected engine template and cannot be independently toggled.");
@@ -360,9 +378,9 @@ public partial class MainWindow
             DateTimeOffset? start = selectedRange switch
             {
                 "Last 7 days" => DateTimeOffset.UtcNow.AddDays(-7), "Last 30 days" => DateTimeOffset.UtcNow.AddDays(-30),
-                "Last 90 days" => DateTimeOffset.UtcNow.AddDays(-90), "Custom date range" => from.SelectedDate is DateTime d ? new DateTimeOffset(d.Date) : throw new ArgumentException("Choose the history start date."), _ => null
+                "Last 90 days" => DateTimeOffset.UtcNow.AddDays(-90), "Custom date range" => from.SelectedDate is DateTime startDate ? new DateTimeOffset(startDate.Date) : throw new ArgumentException("Choose the history start date."), _ => null
             };
-            DateTimeOffset? end = selectedRange == "Custom date range" ? to.SelectedDate is DateTime d ? new DateTimeOffset(d.Date.AddDays(1)) : throw new ArgumentException("Choose the history end date.") : null;
+            DateTimeOffset? end = selectedRange == "Custom date range" ? to.SelectedDate is DateTime endDate ? new DateTimeOffset(endDate.Date.AddDays(1)) : throw new ArgumentException("Choose the history end date.") : null;
             if (start.HasValue && end.HasValue && end <= start) throw new ArgumentException("The report end date must be on or after its start date.");
             return BuildResponseReportSnapshot(Snapshot, scope.SelectedItem?.ToString() ?? "Entire environment", start, end);
         }
@@ -406,21 +424,23 @@ public partial class MainWindow
         var export = Ui.Button("Export report", () => _ = GuardAsync(async () =>
         {
             var selected = ((ReportType)type.SelectedItem).Kind;
-            var selectedFormat = (ReportFormat)format.SelectedItem;
+            var selectedFormat = ((ReportExportFormat)format.SelectedItem).Format;
             var extension = selectedFormat.ToString().ToLowerInvariant();
             var copy = CaptureReportSnapshot();
+            var scopeName = scope.SelectedItem?.ToString() ?? "Entire environment";
+            var historyName = history.SelectedItem?.ToString() ?? "All retained history";
             var dialog = new SaveFileDialog { FileName = $"SENTINEL-{selected}-{DateTime.Today:yyyy-MM-dd}.{extension}", Filter = $"{selectedFormat} report|*.{extension}", AddExtension = true, DefaultExt = extension, OverwritePrompt = true };
             if (dialog.ShowDialog(this) != true) return;
             result.Text = "Exporting report…";
             var artifact = await new ReportingEngine().ExportAsync(copy, selected, selectedFormat, dialog.FileName);
             await _repository.AuditAsync(new(DateTimeOffset.UtcNow, "report.exported", copy.Id,
-                $"{selected}; {selectedFormat}; scope={scope.SelectedItem}; history={history.SelectedItem}; {copy.Assets.Count} scoped assets", Guid.NewGuid().ToString("N")[..12]));
+                $"{selected}; {selectedFormat}; scope={scopeName}; history={historyName}; {copy.Assets.Count} scoped assets", Guid.NewGuid().ToString("N")[..12]));
             result.Text = $"Report saved: {artifact.Path}";
-            ShowNotice("Report exported", $"{ResponseReportTitle(selected)} · {artifact.Format} · {artifact.CreatedAt.LocalDateTime:g}");
+            ShowNotice("Report exported", $"{copy.Name} · {ResponseReportTitle(selected)} · {artifact.Format} · {artifact.CreatedAt.LocalDateTime:g}");
         }), true);
         var configuration = Ui.Stack(Ui.Text("REPORT STUDIO", 12, "AccentBrush", true), Ui.Text("Report configuration", 21, bold: true),
             Ui.Text("Report type", 12, "MutedBrush"), type, Ui.Text("Scope", 12, "MutedBrush"), scope,
-            Ui.Text($"Environment: {Snapshot.Name} · {Snapshot.Mode}", 12, "MutedBrush"),
+            Ui.Text($"Environment: {Snapshot.Name} · {Snapshot.Mode}", 12, "MutedBrush"), audience,
             Ui.Text("History date range", 12, "MutedBrush"), history, Ui.Toolbar(from, to),
             Ui.Text("The date range filters retained timeline, scores, scans, and observations. Current posture remains the latest collected snapshot; this does not reconstruct historical posture.", 12, "MutedBrush"),
             inclusion, Ui.Text("Export format", 12, "MutedBrush"), format, Ui.Toolbar(export, Ui.Button("Refresh preview", () => _ = GuardAsync(PreviewAsync))), result);
@@ -493,5 +513,6 @@ public partial class MainWindow
     };
 
     private sealed record ReportType(ReportKind Kind, string Title);
+    private sealed record ReportExportFormat(ReportFormat Format, string Title);
     private sealed record AnalystTurn(string Question, AnalystAnswer Answer, DateTimeOffset At, EnvironmentSnapshot Evidence);
 }

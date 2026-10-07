@@ -13,9 +13,10 @@ internal sealed class AuthorizedScopeDialog : Window
     public AuthorizedScopeDialog(IReadOnlyList<EngineDescriptor> engines)
     {
         Title = "SENTINEL · Authorize assessment scope";
-        Width = 800; Height = 840; MinHeight = 700; MinWidth = 650; WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        Width = Math.Min(800, SystemParameters.WorkArea.Width - 32); Height = Math.Min(840, SystemParameters.WorkArea.Height - 32); MinHeight = 460; MinWidth = 600; WindowStartupLocation = WindowStartupLocation.CenterOwner;
         var available = engines.Where(e => e.IsAvailable).ToArray();
         var engine = new ComboBox { ItemsSource = available, DisplayMemberPath = "Name", SelectedIndex = available.Length == 0 ? -1 : 0, MinWidth = 300 };
+        System.Windows.Automation.AutomationProperties.SetName(engine, "Assessment engine");
         var description = Ui.Text(available.FirstOrDefault()?.Description ?? "No local engines are available.", 13, "MutedBrush");
         engine.SelectionChanged += (_, _) => description.Text = (engine.SelectedItem as EngineDescriptor)?.Description ?? "Select an available engine.";
         var hosts = Ui.Input(); hosts.AcceptsReturn = true; hosts.Height = 95; hosts.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; hosts.ToolTip = "Exact authorized IP addresses, hostnames, or email domains. One per line. No CIDRs or wildcards.";
