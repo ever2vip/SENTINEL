@@ -174,6 +174,23 @@ internal sealed class DesktopAcceptance(Options options)
         await SetViewport(1920, 1080, 1);
         await CheckAssetWorkflow();
         await CheckFindingWorkflow();
+        await Check("Cloud-provider-summaries-count-recorded-resource-provenance", async () =>
+        {
+            await Navigate("Cloud");
+            foreach (var provider in new[] { "Azure", "Microsoft 365", "AWS", "Google Cloud" })
+            {
+                var expected = _snapshot.GetProperty("Assets").EnumerateArray().Count(asset =>
+                    asset.GetProperty("Kind").GetInt32() == 3 &&
+                    asset.GetProperty("Properties").TryGetProperty("provider", out var recorded) &&
+                    string.Equals(recorded.GetString(), provider, StringComparison.OrdinalIgnoreCase));
+                Assert(expected > 0, "The real Demo fixture has no resource evidence for " + provider + ".");
+                var metric = Descendants(PageRoot()).OfType<StackPanel>().FirstOrDefault(panel =>
+                    panel.Children.OfType<TextBlock>().FirstOrDefault()?.Text == provider.ToUpperInvariant());
+                var value = metric?.Children.OfType<TextBlock>().Skip(1).FirstOrDefault()?.Text;
+                Assert(int.TryParse(value, out var actual) && actual == expected,
+                    provider + " summary does not match recorded resource provenance.");
+            }
+        });
         await CheckGraphWorkflow();
         await CheckAttackPathWorkflow();
         await CheckAnalystWorkflow();

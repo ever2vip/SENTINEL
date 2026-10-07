@@ -146,7 +146,7 @@ public partial class MainWindow
         var panels = new List<UIElement>();
         foreach (var provider in new[] { "Azure", "Microsoft 365", "AWS", "Google Cloud" })
         {
-            var count = resources.Count(a => a.Environment.Equals(provider, StringComparison.OrdinalIgnoreCase));
+            var count = resources.Count(a => a.Properties.GetValueOrDefault("provider", "").Equals(provider, StringComparison.OrdinalIgnoreCase));
             panels.Add(Ui.Metric(provider.ToUpperInvariant(), count.ToString(), count == 0 ? "No resource evidence" : Snapshot.Mode == EnvironmentMode.Demo ? "Synthetic resource inventory" : "Imported resource evidence"));
         }
         PageContent.Children.Add(Ui.Columns(panels.ToArray()));
