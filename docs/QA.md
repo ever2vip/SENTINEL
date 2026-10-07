@@ -69,3 +69,45 @@ Actual rendered PNGs were reviewed across all 20 routes in Dark and Light, plus 
 Earlier integrated runs exposed two C# naming conflicts, Window/button theme inheritance gaps, monitor-limited rendering and detached-tree resource notification errors. All were corrected. A later gate caught the acceptance Application opening a second, ordinary operator-profile window because WPF schedules OnStartup even with Dispatcher.Run. The harness now explicitly suppresses that operator startup, asserts exactly one isolated window, and verifies the preserved upgrade profile remains byte-identical before uninstall. This fixed the cause; no preservation assertion was removed or reset. Failed and superseded runs remain available in Actions.
 
 The final release branch repeats all gates before creating the immutable v1.1.0 tag and publishing SHA-256-verified assets. Native physical monitor DPI transitions, physical Windows 10/11 acceptance, native report SaveFileDialog, tray/OS notification appearance and external authenticated connectors remain manual or unavailable checks. The installer is unsigned and published as a testing prerelease. GitHub Actions upload steps emit upstream Node deprecation notices; application compilation has zero warnings. These notices do not constitute product compiler warnings.
+
+
+## V1.1.1 corrective acceptance
+
+The installed V1.1 user-exported executive PDF revealed priority, rounding and
+synthetic gateway evidence-scope defects. V1.1.1 corrects these with eight new
+product regression checks and installed report narrative/plan consistency
+assertions. Scoring coefficients and the SQLite schema are unchanged; older
+stored Demo evidence is preserved rather than regenerated. Unsupported scoped
+asset-transition prerequisites no longer enable inferred paths.
+
+Windows development run [37637697000](https://github.com/ever2vip/SENTINEL/actions/runs/37637697000),
+source `2bd83211c6cc5441f1336523a961dceb50eee208`, passed:
+
+| Gate | Result |
+| --- | --- |
+| Full Release solution build | Zero warnings and errors |
+| Product behavioral checks | 100 passed, 0 failed, 1 documented machine-dependent skip |
+| Engine regressions | 17 passed, 0 failed |
+| Publication safeguards | 14 passed |
+| Actual installed Desktop | 61 passed, 0 failed; no dispatcher failures |
+| Installer/service/upgrade/uninstall | 28 passed; physical OS/DPI check explicitly not run |
+| Actual rendered acceptance | 369 PNGs; complete 360 matrix; all 20 routes reviewed in both themes |
+
+The upgrade gate installed both unchanged public V1.0 and V1.1 binaries to
+custom paths containing spaces. Database/evidence/history/settings/audit/DPAPI
+continuity passed. V1.1 planning/review records were seeded and read using the
+actual installed DesktopWorkflowStore, preserving both semantics and raw files.
+Uninstall preserved all original operator/service data.
+
+The actual installed coordinator exported a nine-page executive PDF and JSON.
+Review confirmed consistent priority and modeled-value wording, all ten reduction
+and confidence pairs, and explicit gateway segmentation evidence. All 290 JSON
+semantic values were present in the corresponding PDF after whitespace/arrow
+normalization and accounting for independent export IDs. No page text was out
+of bounds. Fresh Demo modeled totals differ because five affected segmentation
+assets are now explicitly recorded; this is documented in V1.1.1.md.
+
+The final release branch repeats all acceptance before immutable tag creation
+and SHA-256 round-trip publication. The existing physical Windows 10/11, native
+DPI, native SaveFileDialog/tray appearance and external-connector limitations
+still apply. The release is unsigned and remains a Windows testing prerelease.
