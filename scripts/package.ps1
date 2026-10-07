@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.0.0',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.1.0',
     [string]$Configuration = 'Release',
     [string]$Makensis = 'makensis.exe',
     [switch]$SkipTests,
@@ -51,7 +51,7 @@ $nativePowerShellDependencies = @(
 $nsisRoot = Split-Path $compilerPath -Parent
 # Check the installed NSIS includes, Unicode plugins, and standard MUI resources used by this script.
 $nsisInputs = @(
-    'Include/MUI2.nsh', 'Include/LogicLib.nsh', 'Include/x64.nsh', 'Include/WinVer.nsh',
+    'Include/MUI2.nsh', 'Include/LogicLib.nsh', 'Include/x64.nsh', 'Include/WinVer.nsh', 'Include/WordFunc.nsh',
     'Include/WinMessages.nsh', 'Include/nsDialogs.nsh', 'Include/LangFile.nsh', 'Include/Util.nsh',
     'Contrib/Modern UI 2/MUI2.nsh', 'Contrib/Modern UI 2/Deprecated.nsh',
     'Contrib/Modern UI 2/Interface.nsh', 'Contrib/Modern UI 2/Localization.nsh', 'Contrib/Modern UI 2/Pages.nsh',

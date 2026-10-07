@@ -16,3 +16,6 @@ outputs/
 *.user
 TestResults/
 secrets/
+
+__pycache__/
+*.pyc

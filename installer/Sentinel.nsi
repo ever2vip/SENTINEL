@@ -3,6 +3,8 @@ Unicode true
 !include "LogicLib.nsh"
 !include "x64.nsh"
 !include "WinVer.nsh"
+!include "WordFunc.nsh"
+!insertmacro VersionCompare
 ; This x86 NSIS bootstrapper must launch native 64-bit PowerShell explicitly.
 ; Do not rely on thread-local WOW64 redirection state inherited from .onInit.
 !define NATIVE_POWERSHELL "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
@@ -44,7 +46,7 @@ Unicode true
 !endif
 
 !ifndef VERSION
-  !define VERSION "1.0.0"
+  !define VERSION "1.1.0"
 !endif
 !ifndef PUBLISH_DIR
   !error "PUBLISH_DIR is required; use scripts/package.ps1 to resolve the absolute payload directory."
@@ -91,6 +93,22 @@ Function .onInit
   !insertmacro VerifyNativePowerShell
   !insertmacro ConfigureNativePowerShellModules
   SetRegView 64
+  ; Resolve the existing 64-bit installation explicitly before any file changes.
+  ; InstallDirRegKey must not depend on the bootstrapper's initial registry view.
+  ReadRegStr $2 HKLM "Software\SENTINEL" "InstallDir"
+  ${If} $2 != ""
+    StrCpy $INSTDIR $2
+  ${EndIf}
+  ; Preserve the stable V1.0 installation identity and block accidental downgrades.
+  ReadRegStr $0 HKLM "Software\SENTINEL" "Version"
+  ${If} $0 != ""
+    ${VersionCompare} $0 "${VERSION}" $1
+    ${If} $1 == 1
+      MessageBox MB_ICONSTOP "A newer SENTINEL version ($0) is already installed. Setup ${VERSION} cannot downgrade it. Your installation and evidence were preserved." /SD IDOK
+      SetErrorLevel 17
+      Abort
+    ${EndIf}
+  ${EndIf}
   SetShellVarContext all
   InitPluginsDir
 FunctionEnd

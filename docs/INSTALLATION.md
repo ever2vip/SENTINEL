@@ -5,7 +5,7 @@ SENTINEL targets Windows 10/11 x64. The installer contains self-contained .NET d
 ## Install and first launch
 
 1. Verify the installer SHA-256 against `SHA256SUMS.txt` from the same trusted build. An unsigned installer can trigger Windows SmartScreen; the release manifest explicitly records signing status.
-2. Run `SENTINEL-Enterprise-V1.0-Setup-x64.exe` from `release/SENTINEL-Enterprise-V1.0`. Setup requests administrator elevation and installs beneath the 64-bit Program Files directory. A desktop shortcut is optional; the Start Menu entry is installed for all users.
+2. Run `SENTINEL-Enterprise-V1.1-Setup-x64.exe` from `release/SENTINEL-Enterprise-V1.1`. Setup requests administrator elevation and installs beneath the 64-bit Program Files directory. A desktop shortcut is optional; the Start Menu entry is installed for all users.
 3. Start **SENTINEL Enterprise** from the Start Menu as the operator's ordinary Windows account. Choose **Demo Organization** for offline synthetic evidence, or **Live Environment** and explicitly authorize the assessment scope. No network is assessed merely by installing or starting the service.
 
 The Desktop stores its SQLite database, operator preferences, exports and protected connector configuration in that operator's `%LOCALAPPDATA%\Sentinel` directory. Connector secrets are protected for the Windows user with DPAPI. Back up operator data before upgrades; DPAPI secrets are bound to the Windows identity and require its key material for recovery. The service does not read user databases or connector credentials.
@@ -38,7 +38,11 @@ Retention accepts 7–365 days and deletes only expired `maintenance-*.jsonl` fi
 
 ## Upgrade and uninstall
 
-Run Setup again to upgrade the stable application/service identity. Close the desktop application and allow active assessment cancellation to finish first. Setup stops the maintenance service with a 30-second timeout and displays retry/cancel if the desktop remains open; it never terminates unrelated processes. Service configuration and user assessment data persist across upgrades. Setup replaces files in the publication directories; use a clean publication when packaging.
+Run V1.1 Setup over V1.0 to upgrade the stable application/service identity.
+Setup preserves the per-user SQLite database, settings, protected credentials and
+service maintenance settings/audit data. A newer installed version cannot be
+downgraded by this installer; exit code 17 leaves its installation untouched.
+Run Setup again for a same-version repair. Close the desktop application and allow active assessment cancellation to finish first. Setup stops the maintenance service with a 30-second timeout and displays retry/cancel if the desktop remains open; it never terminates unrelated processes. Service configuration and user assessment data persist across upgrades. Setup replaces files in the publication directories; use a clean publication when packaging.
 
 Uninstall through Windows **Installed apps** or the Start Menu. The uninstaller removes the service, binaries, shortcuts and application registration. Operator data and service audit evidence are preserved by default. An administrator can remove `%PROGRAMDATA%\Sentinel` after retention review; each operator can remove their own `%LOCALAPPDATA%\Sentinel` when they intend to delete all local evidence and protected settings. Do not remove those directories while the desktop is using them.
 
@@ -52,25 +56,40 @@ From the repository root on Windows with the pinned .NET SDK, PowerShell 7 and N
 ./scripts/package.ps1 -Makensis 'C:\Program Files (x86)\NSIS\makensis.exe'
 ```
 
-Packaging restores/builds the complete solution with warnings treated as errors, runs the product test harness, publishes self-contained `win-x64` Desktop and Service outputs to `artifacts/publish`, and produces `release/SENTINEL-Enterprise-V1.0/SENTINEL-Enterprise-V1.0-Setup-x64.exe`. `release-manifest.json` and `SHA256SUMS.txt` beside Setup record file hashes, version, source commit when available, SDK version, signing status and reproducibility limitations. Managed assemblies use deterministic compilation. A manifest enables verification; it does not prove byte-for-byte installer reproducibility, which requires an independent repeat build comparison.
+Packaging restores/builds the complete solution with warnings treated as errors, runs the product test harness, publishes self-contained `win-x64` Desktop and Service outputs to `artifacts/publish`, and produces `release/SENTINEL-Enterprise-V1.1/SENTINEL-Enterprise-V1.1-Setup-x64.exe`. `release-manifest.json` and `SHA256SUMS.txt` beside Setup record file hashes, version, source commit when available, SDK version, signing status and reproducibility limitations. Managed assemblies use deterministic compilation. A manifest enables verification; it does not prove byte-for-byte installer reproducibility, which requires an independent repeat build comparison.
 
-The NSIS script can also compile on Linux after cross-publication:
+Use `scripts/package.ps1` for packaging: it resolves every repository helper and
+document from its own script location, verifies all NSIS resources/native
+PowerShell modules and all self-contained payload files, prints absolute paths,
+and fails before NSIS if any dependency is absent. Direct NSIS invocation requires
+all of these resolved inputs and must not assume the caller's working directory.
+Native installer helpers run in Windows PowerShell x64 with an explicit native
+module path. Diagnostics are retained in `%TEMP%\SENTINEL-Setup.log`.
 
-```bash
-makensis -DVERSION=1.0.0 -DPUBLISH_DIR=/absolute/path/artifacts/publish -DOUTPUT_FILE=/absolute/path/release/SENTINEL-Enterprise-V1.0/SENTINEL-Enterprise-V1.0-Setup-x64.exe installer/Sentinel.nsi
-```
-
-The GitHub Actions workflow builds on Windows, packages, runs elevated install/service/upgrade/uninstall smoke checks, and stores artifacts plus verification evidence. The optional manual workflow dispatch creates a draft prerelease only; it never automatically publishes a release.
+The GitHub Actions workflow builds on Windows, packages, runs elevated
+install/service/upgrade/uninstall checks and installed WPF acceptance, and stores
+artifacts plus verification evidence. Manual workflow dispatch produces Actions
+artifacts only. A `v1.1.0` tag run publishes a verified testing prerelease after
+all gates pass; it never modifies the historical `v1.0.0` release.
 
 ## Windows release acceptance gate
 
 Use an elevated disposable Windows VM for the install/uninstall gate, not an existing deployment:
 
 ```powershell
-./scripts/verify-windows.ps1 -SetupPath ./release/SENTINEL-Enterprise-V1.0/SENTINEL-Enterprise-V1.0-Setup-x64.exe -InstallUninstall -DesktopSmoke
+./scripts/verify-windows.ps1 -SetupPath ./release/SENTINEL-Enterprise-V1.1/SENTINEL-Enterprise-V1.1-Setup-x64.exe -InstallUninstall -DesktopSmoke
 ```
 
-The script checks the PE installer, service account and quoted executable path, fresh heartbeat, protected service ACLs, Start Menu registration, first-launch window, same-version upgrade, uninstall and evidence preservation. It saves every completed check and any failure under `artifacts/windows-verification`. It refuses to overwrite an existing installation. It records interactive product QA as **not run**; automated process startup does not demonstrate full UI correctness.
+The script checks the PE installer, expected installed version, service account and quoted executable path, fresh heartbeat, protected service ACLs, Start Menu registration, first-launch window, same-version upgrade, uninstall and evidence preservation. It saves every completed check and any failure under `artifacts/windows-verification`. It refuses to overwrite an existing installation. Pass `-BaselineSetupPath` with the verified public V1.0 EXE,
+`-UpgradeProbePath` with the QA-only probe DLL and `-DesktopAcceptanceScript`
+with `scripts/verify-desktop.ps1` to run the complete release gate. That gate
+requires a clean disposable operator profile. It first verifies a fresh V1.1
+install, then installs the genuine V1.0 baseline and checks V1.1 upgrade
+preservation of database bytes, evidence, history, settings, audit records,
+maintenance settings and DPAPI decryption through the actual installed binaries.
+The desktop script renders all navigation pages with both themes and exercises
+core workflows through the installed WPF assembly, using isolated QA data.
+Physical Windows 10/11 and native scaling remain explicitly **not run** by CI.
 
 Before naming a release candidate, record successful acceptance on both supported Windows editions:
 
