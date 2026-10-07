@@ -1,17 +1,17 @@
-name: SENTINEL Enterprise V1.1 release
+name: SENTINEL Enterprise V1.1.1 release
 
 on:
   workflow_dispatch:
   push:
-    branches: ['v1.1-development', 'v1.1-release']
-    tags: ['v1.1.0']
+    branches: ['v1.1.1-development', 'v1.1.1-release']
+    tags: ['v1.1.1']
 
 permissions:
   contents: read
 
 concurrency:
   group: sentinel-v1-release-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref == 'refs/heads/v1.1-development' }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/v1.1.1-development' }}
 
 jobs:
   windows-release-gate:
@@ -62,7 +62,7 @@ jobs:
           New-Item -ItemType Directory -Path artifacts/qa -Force | Out-Null
           Start-Transcript -Path artifacts/qa/package.log
           try {
-            ./scripts/package.ps1 -Version '1.1.0' -Configuration Release -Makensis $env:SENTINEL_MAKENSIS
+            ./scripts/package.ps1 -Version '1.1.1' -Configuration Release -Makensis $env:SENTINEL_MAKENSIS
           } finally { Stop-Transcript }
       - name: Run engine regression tests
         shell: pwsh
@@ -96,6 +96,23 @@ jobs:
           $expected = '13b2d877223657b604c7607179afe91b151d8331308ddc8f299378da50b64ad2'
           Write-Host "Public V1.0 installer: $setup; SHA-256: $hash"
           if ($hash -ne $expected) { throw 'The historical public V1.0 installer changed. Refusing to continue the upgrade gate.' }
+      - name: Download and verify immutable public V1.1 upgrade baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $baseline = Join-Path $env:GITHUB_WORKSPACE 'artifacts/v1.1-baseline'
+          New-Item -ItemType Directory -Path $baseline -Force | Out-Null
+          gh release download v1.1.0 --pattern SENTINEL-Enterprise-V1.1-Setup-x64.exe --dir $baseline
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the actual historical V1.1 installer. Upgrade gate cannot use current-source approximations.' }
+          $setup = Join-Path $baseline 'SENTINEL-Enterprise-V1.1-Setup-x64.exe'
+          if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { throw 'Historical V1.1 installer is missing.' }
+          $hash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected = '54ff434a684523c2f6a454e7aa4c7764893eb47cad3596f577a27510a37aab52'
+          Write-Host "Public V1.1 installer: $setup; bytes: $((Get-Item -LiteralPath $setup).Length); SHA-256: $hash"
+          if ($hash -ne $expected -or (Get-Item -LiteralPath $setup).Length -ne 45678805) { throw 'The historical public V1.1 installer changed. Refusing to continue the upgrade gate.' }
       - name: Test release publication safeguards
         shell: pwsh
         run: |
@@ -106,11 +123,12 @@ jobs:
         run: |
           Start-Transcript -Path artifacts/qa/windows-smoke.log
           try {
-            $setup = Join-Path $env:GITHUB_WORKSPACE 'release/SENTINEL-Enterprise-V1.1/SENTINEL-Enterprise-V1.1-Setup-x64.exe'
+            $setup = Join-Path $env:GITHUB_WORKSPACE 'release/SENTINEL-Enterprise-V1.1.1/SENTINEL-Enterprise-V1.1.1-Setup-x64.exe'
             $baseline = Join-Path $env:GITHUB_WORKSPACE 'artifacts/v1.0-baseline/SENTINEL-Enterprise-V1.0-Setup-x64.exe'
+            $baseline11 = Join-Path $env:GITHUB_WORKSPACE 'artifacts/v1.1-baseline/SENTINEL-Enterprise-V1.1-Setup-x64.exe'
             $probe = Join-Path $env:GITHUB_WORKSPACE 'artifacts/upgrade-probe/Sentinel.UpgradeProbe.dll'
             $desktopAcceptance = Join-Path $env:GITHUB_WORKSPACE 'scripts/verify-desktop.ps1'
-            ./scripts/verify-windows.ps1 -SetupPath $setup -ExpectedVersion '1.1.0' -BaselineSetupPath $baseline -UpgradeProbePath $probe -DesktopAcceptanceScript $desktopAcceptance -InstallUninstall -DesktopSmoke
+            ./scripts/verify-windows.ps1 -SetupPath $setup -ExpectedVersion '1.1.1' -BaselineSetupPath $baseline -V11BaselineSetupPath $baseline11 -UpgradeProbePath $probe -DesktopAcceptanceScript $desktopAcceptance -InstallUninstall -DesktopSmoke
           } finally {
             try {
               $setupLog = Join-Path $env:TEMP 'SENTINEL-Setup.log'
@@ -132,17 +150,17 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $distribution = Join-Path $env:GITHUB_WORKSPACE 'artifacts/distribution/SENTINEL-Enterprise-V1.1'
-          $package = Join-Path $env:GITHUB_WORKSPACE 'release/SENTINEL-Enterprise-V1.1'
+          $distribution = Join-Path $env:GITHUB_WORKSPACE 'artifacts/distribution/SENTINEL-Enterprise-V1.1.1'
+          $package = Join-Path $env:GITHUB_WORKSPACE 'release/SENTINEL-Enterprise-V1.1.1'
           New-Item -ItemType Directory -Path $distribution -Force | Out-Null
-          $exeName = 'SENTINEL-Enterprise-V1.1-Setup-x64.exe'
-          $zipName = 'SENTINEL-Enterprise-V1.1-Installer.zip'
+          $exeName = 'SENTINEL-Enterprise-V1.1.1-Setup-x64.exe'
+          $zipName = 'SENTINEL-Enterprise-V1.1.1-Installer.zip'
           $exe = Join-Path $distribution $exeName
           Copy-Item -LiteralPath (Join-Path $package $exeName) -Destination $exe
           $exeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           $exeSize = (Get-Item -LiteralPath $exe).Length
           $readme = @"
-          SENTINEL Enterprise V1.1 - unsigned Windows 10/11 x64 testing installer
+          SENTINEL Enterprise V1.1.1 - unsigned Windows 10/11 x64 testing installer
 
           INSTALLER: $exeName
           SIZE: $exeSize bytes
@@ -160,8 +178,9 @@ jobs:
 
           The CI Release build, product and engine tests, installed WPF functional/rendered
           acceptance, and Windows installer/service/first-launch/uninstall checks passed.
-          Upgrade from the actual public V1.0 installer preserved evidence, preferences,
-          history, audit records, maintenance settings, and user-bound DPAPI data.
+          Upgrades from the actual public V1.0 and V1.1 installers preserved evidence,
+          preferences, history, audit records, maintenance settings, user-bound DPAPI
+          data, and the V1.1 desktop workflow metadata.
           Physical Windows 10/11 and native display scaling acceptance remain required.
           This unsigned testing prerelease is not a fully accepted production release.
           The maintenance service does not autonomously scan networks.
@@ -197,28 +216,28 @@ jobs:
           Copy-Item -LiteralPath (Join-Path $verification 'verification-results.json') -Destination $distribution
           Copy-Item -LiteralPath (Join-Path $verification 'desktop/verification-results.json') -Destination (Join-Path $distribution 'desktop-verification-results.json')
           @"
-          ## SENTINEL Enterprise V1.1 distributables
+          ## SENTINEL Enterprise V1.1.1 distributables
           | File | Bytes | SHA-256 |
           | --- | ---: | --- |
           | $exeName | $exeSize | $exeHash |
           | $zipName | $((Get-Item -LiteralPath $zip).Length) | $zipHash |
 
-          Download SENTINEL-Enterprise-V1.1-Windows-x64 from this run's Artifacts section.
-          A successful v1.1.0 tag run also publishes and verifies GitHub Release assets.
+          Download SENTINEL-Enterprise-V1.1.1-Windows-x64 from this run's Artifacts section.
+          A successful v1.1.1 tag run also publishes and verifies GitHub Release assets.
           This CI build is unsigned. Installed UI/upgrade gates passed; physical Windows/native-DPI acceptance remains required.
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
       - name: Upload installer and distribution ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: SENTINEL-Enterprise-V1.1-Windows-x64
-          path: artifacts/distribution/SENTINEL-Enterprise-V1.1/*
+          name: SENTINEL-Enterprise-V1.1.1-Windows-x64
+          path: artifacts/distribution/SENTINEL-Enterprise-V1.1.1/*
           if-no-files-found: error
           retention-days: 30
       - name: Upload QA logs and evidence, including failed checks
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SENTINEL-Enterprise-V1.1-QA
+          name: SENTINEL-Enterprise-V1.1.1-QA
           path: |
             artifacts/qa/
             artifacts/windows-verification/
@@ -229,10 +248,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SENTINEL-Enterprise-V1.1-Visual-Preview
+          name: SENTINEL-Enterprise-V1.1.1-Visual-Preview
           path: |
             artifacts/windows-verification/verification-results.json
             artifacts/windows-verification/desktop/verification-results.json
+            artifacts/windows-verification/desktop/executive-demo.pdf
+            artifacts/windows-verification/desktop/executive-demo.json
+            artifacts/windows-verification/desktop/technical-demo.json
             artifacts/windows-verification/desktop/screenshots/*-1366x768-effective-100pct.png
             artifacts/windows-verification/desktop/screenshots/*-selected.png
             artifacts/windows-verification/desktop/screenshots/*-breakpoint.png
@@ -244,7 +266,7 @@ jobs:
           retention-days: 30
 
   publish-release:
-    if: github.event_name == 'push' && (github.ref == 'refs/tags/v1.1.0' || github.ref == 'refs/heads/v1.1-release')
+    if: github.event_name == 'push' && (github.ref == 'refs/tags/v1.1.1' || github.ref == 'refs/heads/v1.1.1-release')
     needs: windows-release-gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -254,10 +276,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: SENTINEL-Enterprise-V1.1-Windows-x64
+          name: SENTINEL-Enterprise-V1.1.1-Windows-x64
           path: distribution
-      - name: Create immutable v1.1.0 tag after the validated release-branch gate
-        if: github.ref == 'refs/heads/v1.1-release'
+      - name: Create immutable v1.1.1 tag after the validated release-branch gate
+        if: github.ref == 'refs/heads/v1.1.1-release'
         shell: python
         env:
           GH_TOKEN: ${{ github.token }}
@@ -276,15 +298,15 @@ jobs:
               with urllib.request.urlopen(request, timeout=60) as response:
                   return json.load(response)
           try:
-              reference = api('/git/ref/tags/v1.1.0')
+              reference = api('/git/ref/tags/v1.1.1')
           except urllib.error.HTTPError as error:
               if error.code != 404:
                   raise
-              reference = api('/git/refs', {'ref': 'refs/tags/v1.1.0', 'sha': commit})
+              reference = api('/git/refs', {'ref': 'refs/tags/v1.1.1', 'sha': commit})
           if reference['object']['type'] != 'commit' or reference['object']['sha'] != commit:
-              raise RuntimeError('v1.1.0 already identifies different source. No tag or release was overwritten.')
-          print('Immutable v1.1.0 tag identifies the exact source that passed the Windows release gate: ' + commit)
-      - name: Upload, verify downloaded assets, then publish the V1.1 testing prerelease
+              raise RuntimeError('v1.1.1 already identifies different source. No tag or release was overwritten.')
+          print('Immutable v1.1.1 tag identifies the exact source that passed the Windows release gate: ' + commit)
+      - name: Upload, verify downloaded assets, then publish the V1.1.1 testing prerelease
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

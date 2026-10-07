@@ -11,10 +11,16 @@ specification = importlib.util.spec_from_file_location("sentinel_publish_release
 release = importlib.util.module_from_spec(specification)
 specification.loader.exec_module(release)
 
-GATES = ["silent-install", "service-boundaries", "desktop-first-launch", "same-version-upgrade",
-         "silent-uninstall", "public-v1.0-baseline-hash", "public-v1.0-demo-settings-dpapi-seed",
-         "v1.0-to-v1.1-in-place-upgrade", "v1.0-data-settings-secret-and-audit-bytes-preserved",
-         "v1.1-reads-original-v1.0-demo-settings-and-dpapi", "installed-desktop-functional-and-rendered-acceptance",
+GATES = ["installer-exists", "installer-is-pe", "silent-install", "service-account-and-start",
+         "service-health", "service-boundaries", "start-menu-and-uninstall", "desktop-first-launch",
+         "same-version-upgrade", "silent-uninstall", "public-v1.0-baseline-hash", "public-v1.0-install",
+         "public-v1.0-demo-settings-dpapi-seed", "v1.0-to-v1.1.1-in-place-upgrade",
+         "v1.0-data-settings-secret-and-audit-bytes-preserved", "v1.1.1-reads-original-v1.0-demo-settings-and-dpapi",
+         "v1.0-upgraded-service-account-and-health", "v1.0-upgraded-silent-uninstall-preserves-evidence",
+         "public-v1.1-baseline-hash", "public-v1.1-install", "public-v1.1-demo-settings-dpapi-seed",
+         "v1.1-to-v1.1.1-in-place-upgrade", "v1.1-data-settings-secret-and-audit-bytes-preserved",
+         "v1.1.1-reads-original-v1.1-demo-settings-and-dpapi", "v1.1-upgraded-service-account-and-health",
+         "installed-desktop-functional-and-rendered-acceptance", "installed-desktop-keeps-upgrade-profile-unchanged",
          "upgraded-silent-uninstall-preserves-evidence"]
 
 
@@ -27,19 +33,19 @@ class PublicationTests(unittest.TestCase):
         for name in release.FILES:
             (self.directory / name).write_bytes(("fixture:" + name).encode())
         assembly_hash = "d" * 64
-        (self.directory / "release-manifest.json").write_text(json.dumps({"sourceCommit": self.source, "version": "1.1.0", "files": [{"path": "../../artifacts/publish/Desktop/Sentinel.Desktop.dll", "sha256": assembly_hash}]}))
+        (self.directory / "release-manifest.json").write_text(json.dumps({"sourceCommit": self.source, "version": release.VERSION, "files": [{"path": "../../artifacts/publish/Desktop/Sentinel.Desktop.dll", "sha256": assembly_hash}, {"path": release.EXE, "sha256": release.digest(self.directory / release.EXE), "sizeBytes": (self.directory / release.EXE).stat().st_size}]}))
         (self.directory / "verification-results.json").write_text(json.dumps({"checks": [{"name": name, "status": "passed"} for name in GATES]}))
         (self.directory / "desktop-verification-results.json").write_text(json.dumps({"status": "passed", "failed": 0, "quick": False, "renders": [{}] * 360, "dispatcherFailures": [], "desktopAssemblySha256": assembly_hash, "checks": [{"Name": "render-matrix-physical-screenshot-completeness", "Status": "passed"}]}))
         checksums = "\n".join(release.digest(self.directory / name) + "  " + name for name in [release.EXE, release.ZIP])
         (self.directory / "SHA256SUMS.txt").write_text(checksums, encoding="ascii")
         self.state = {"id": 42, "tag_name": release.TAG, "name": release.TITLE, "prerelease": True,
-                      "draft": True, "assets": [], "html_url": "https://github.com/test/sentinel/releases/tag/v1.1.0"}
+                      "draft": True, "assets": [], "html_url": "https://github.com/test/sentinel/releases/tag/v1.1.1"}
         self.uploads = []
         self.downloads = []
         self.mutations = []
 
     def api(self, endpoint):
-        if endpoint.endswith("git/ref/tags/v1.1.0"):
+        if endpoint.endswith("git/ref/tags/v1.1.1"):
             return {"object": {"type": "commit", "sha": self.source}}
         self.assertEqual(endpoint, "repos/test/sentinel/releases/42")
         return self.state.copy()
@@ -128,6 +134,42 @@ class PublicationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "required installation"):
                 release.publish(self.directory, "test/sentinel", self.source)
             api.assert_not_called()
+
+    def test_missing_genuine_v11_upgrade_gate_fails_before_github(self):
+        path = self.directory / "verification-results.json"
+        result = json.loads(path.read_text())
+        result["checks"] = [check for check in result["checks"] if check["name"] != "v1.1-to-v1.1.1-in-place-upgrade"]
+        path.write_text(json.dumps(result))
+        with patch.object(release, "api") as api:
+            with self.assertRaisesRegex(RuntimeError, "V1.0/V1.1 upgrade"):
+                release.publish(self.directory, "test/sentinel", self.source)
+            api.assert_not_called()
+
+    def test_duplicate_gate_cannot_hide_failure(self):
+        path = self.directory / "verification-results.json"
+        result = json.loads(path.read_text())
+        result["checks"].insert(0, {"name": "silent-install", "status": "failed"})
+        path.write_text(json.dumps(result))
+        with self.assertRaisesRegex(RuntimeError, "duplicate check names"):
+            self.perform()
+        self.assertEqual(self.mutations, [])
+
+    def test_repackaged_installer_is_rejected_even_with_updated_checksums(self):
+        (self.directory / release.EXE).write_bytes(b"different executable after installed QA")
+        checksums = "\n".join(release.digest(self.directory / name) + "  " + name for name in [release.EXE, release.ZIP])
+        (self.directory / "SHA256SUMS.txt").write_text(checksums, encoding="ascii")
+        with self.assertRaisesRegex(RuntimeError, "packaged manifest"):
+            self.perform()
+        self.assertEqual(self.mutations, [])
+
+    def test_manifest_for_original_v11_cannot_be_published_as_patch(self):
+        path = self.directory / "release-manifest.json"
+        result = json.loads(path.read_text())
+        result["version"] = "1.1.0"
+        path.write_text(json.dumps(result))
+        with self.assertRaisesRegex(RuntimeError, "manifest does not identify"):
+            self.perform()
+        self.assertEqual(self.mutations, [])
 
     def test_read_only_refresh_waits_for_uploaded_asset_visibility(self):
         empty = self.state.copy()

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -50,6 +51,121 @@ internal static class ReportingTests
                 Assert(!Directory.EnumerateFiles(temp.Path, "*.tmp").Any(), "Export left a partial artifact.");
             });
         }
+        await test.Check("Executive and technical narratives prioritize grouped remediation rather than an individual finding", async () =>
+        {
+            var snapshot = PrioritySnapshot();
+            var risk = new RiskEngine().Calculate(snapshot);
+            var actions = new RemediationEngine().Plan(snapshot);
+            Equal("individual-mfa", risk.RankedFindings[0].Finding.Id, "Fixture needs a different highest individual finding");
+            Assert(actions[0].FindingIds.Count == 2 && !actions[0].FindingIds.Contains("individual-mfa"), "Fixture needs a grouped first action.");
+            var before = JsonSerializer.Serialize(snapshot);
+            using var temp = new TemporaryDirectory();
+            foreach (var kind in new[] { ReportKind.Executive, ReportKind.Technical })
+            {
+                var path = temp.File(kind + ".json");
+                await new ReportingEngine().ExportAsync(snapshot, kind, ReportFormat.Json, path);
+                using var document = JsonDocument.Parse(await File.ReadAllBytesAsync(path));
+                var rows = RemediationRows(document.RootElement);
+                Equal(actions[0].Id, rows[0][0].GetString()!, "Report priority differs from grouped remediation engine");
+                var narrative = ExecutiveParagraphs(document.RootElement);
+                Assert(narrative.Any(p => p.Contains($"The first remediation priority is '{actions[0].Title}' [{actions[0].Id}]", StringComparison.Ordinal)), "Narrative contradicts priority 1 of the structured remediation plan.");
+                Assert(narrative.Any(p => p.Contains("highest-risk individual finding is 'Require MFA'", StringComparison.Ordinal)), "Highest individual finding is not distinguished from grouped priorities.");
+                Assert(!narrative.Any(p => p.Contains("first remediation priority is 'Require MFA'", StringComparison.Ordinal)), "Individual risk overrides the higher-impact shared-cause action.");
+            }
+            Equal(before, JsonSerializer.Serialize(snapshot), "Reporting changed collected evidence or dispositions");
+        });
+        await test.Check("Executive top ten and narrative share deterministic reduction and ID ordering even for unsorted tied actions", async () =>
+        {
+            var snapshot = new EnvironmentSnapshot { Id = "report-ties", UpdatedAt = CoreTests.FixtureTime };
+            snapshot.Assets.Add(new Asset { Id = "tie-asset", BusinessCriticality = 3 });
+            for (var i = 0; i < 12; i++)
+                snapshot.Findings.Add(new Finding { Id = $"tie-{i:00}", Title = $"Finding {i:00}", Severity = Severity.High,
+                    Category = SecurityCategory.Endpoint, AssetIds = ["tie-asset"], Confidence = 1 });
+            var planned = new RemediationEngine().Plan(snapshot).ToArray();
+            Assert(planned.All(a => a.ModeledRiskReduction == planned[0].ModeledRiskReduction), "Fixture actions must tie.");
+            var expected = planned.Select((action, index) => action with { Title = $"Task {planned.Length - index:00}" }).ToArray();
+            var engine = new ReportingEngine(new RiskEngine(), new FixtureRemediationEngine(expected.Reverse().ToArray()),
+                new ComplianceEngine(), new AttackPathEngine());
+            using var temp = new TemporaryDirectory();
+            await engine.ExportAsync(snapshot, ReportKind.Executive, ReportFormat.Json, temp.File("ties.json"));
+            using var document = JsonDocument.Parse(await File.ReadAllBytesAsync(temp.File("ties.json")));
+            var rows = RemediationRows(document.RootElement);
+            Equal(10, rows.Length, "Executive plan exceeds or truncates the top-ten limit incorrectly");
+            for (var i = 0; i < rows.Length; i++)
+            {
+                Equal(expected[i].Id, rows[i][0].GetString()!, "Tie order or top-ten selection changed");
+                Equal((i + 1).ToString(CultureInfo.InvariantCulture), rows[i][1].GetString()!, "Published priority is not sequential");
+            }
+            Assert(ExecutiveParagraphs(document.RootElement).Any(p => p.Contains($"'{expected[0].Title}' [{expected[0].Id}]", StringComparison.Ordinal)), "Narrative uses a different tie order from the plan.");
+            snapshot.Findings.Reverse();
+            Equal(string.Join(";", planned.Select(a => a.Id)), string.Join(";", new RemediationEngine().Plan(snapshot).Select(a => a.Id)), "Input order changes tied remediation priority");
+        });
+        await test.Check("Remediation reasons and structured reports use the same published midpoint value across cultures", async () =>
+        {
+            var priorCulture = CultureInfo.CurrentCulture;
+            try
+            {
+                CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
+                using var temp = new TemporaryDirectory();
+                // Include values on both sides of a formatting midpoint, and a two-decimal
+                // sum susceptible to binary floating-point accumulation at 70.25.
+                var cases = new[] { new[] { 70.249 }, new[] { 70.251 }, new[] { 70.349 }, new[] { 70.351 }, new[] { 66.07, 4.14, 0.04 } };
+                foreach (var values in cases)
+                {
+                    var snapshot = new EnvironmentSnapshot { Id = "report-rounding", UpdatedAt = CoreTests.FixtureTime };
+                    var scores = new Dictionary<string, double>(StringComparer.Ordinal);
+                    for (var i = 0; i < values.Length; i++)
+                    {
+                        var id = $"round-{i}";
+                        snapshot.Findings.Add(new Finding { Id = id, Title = "Review the shared configuration", RootCauseKey = "same-cause",
+                            Severity = Severity.High, Category = SecurityCategory.Endpoint, Confidence = 0.875 });
+                        scores.Add(id, values[i]);
+                    }
+                    var risk = new FixtureRiskEngine(scores);
+                    var remediation = new RemediationEngine(risk);
+                    var action = remediation.Plan(snapshot).Single();
+                    Equal(Math.Round(values.OrderDescending().Sum(), 2), action.ModeledRiskReduction, "Published numeric risk precision changed");
+                    var published = action.ModeledRiskReduction.ToString("0.0", CultureInfo.InvariantCulture);
+                    Assert(action.Why.Contains($"Approximately {published} currently modeled risk points", StringComparison.Ordinal), "Description formats raw rather than published risk, or depends on the operator culture.");
+                    await new ReportingEngine(risk, remediation, new ComplianceEngine(), new AttackPathEngine())
+                        .ExportAsync(snapshot, ReportKind.Executive, ReportFormat.Json, temp.File("round.json"));
+                    using var document = JsonDocument.Parse(await File.ReadAllBytesAsync(temp.File("round.json")));
+                    var row = RemediationRows(document.RootElement).Single();
+                    Equal(action.Why, row[3].GetString()!, "Structured report replaced the canonical reason");
+                    Equal(published + " units", row[7].GetString()!, "Report reduction and business reason disagree");
+                    Assert(ExecutiveParagraphs(document.RootElement).Any(p => p.Contains($"direct reduction of {published} currently modeled risk units", StringComparison.Ordinal)), "Executive estimate disagrees with the structured plan.");
+                }
+            }
+            finally { CultureInfo.CurrentCulture = priorCulture; }
+        });
+        await test.Check("Empty executive reports preserve unknown coverage without inventing remediation", async () =>
+        {
+            using var temp = new TemporaryDirectory();
+            await new ReportingEngine().ExportAsync(new EnvironmentSnapshot { Id = "empty-report", UpdatedAt = CoreTests.FixtureTime },
+                ReportKind.Executive, ReportFormat.Json, temp.File("empty.json"));
+            using var document = JsonDocument.Parse(await File.ReadAllBytesAsync(temp.File("empty.json")));
+            Equal(JsonValueKind.Null, document.RootElement.GetProperty("GlobalSecurityScore").ValueKind, "Unassessed score became a security assurance");
+            Equal(0, RemediationRows(document.RootElement).Length, "Empty evidence produced an action");
+            var paragraphs = ExecutiveParagraphs(document.RootElement);
+            Assert(paragraphs.Any(p => p.Contains("No active scored findings", StringComparison.Ordinal)) &&
+                !paragraphs.Any(p => p.Contains("first remediation priority", StringComparison.Ordinal)), "Empty evidence invented an executive priority.");
+        });
+        await test.Check("Current risk acceptance retains individual risk without inventing an actionable executive priority", async () =>
+        {
+            var snapshot = PrioritySnapshot();
+            snapshot.Findings.RemoveAll(f => f.Id != "individual-mfa");
+            snapshot.Findings[0].Status = FindingStatus.AcceptedRisk;
+            snapshot.Findings[0].AcceptedUntil = CoreTests.FixtureTime.AddYears(50);
+            using var temp = new TemporaryDirectory();
+            await new ReportingEngine().ExportAsync(snapshot, ReportKind.Executive, ReportFormat.Json, temp.File("accepted.json"));
+            using var document = JsonDocument.Parse(await File.ReadAllBytesAsync(temp.File("accepted.json")));
+            Assert(document.RootElement.GetProperty("TotalModeledRisk").GetDouble() > 0, "Acceptance erased modeled risk.");
+            Equal(0, RemediationRows(document.RootElement).Length, "Current acceptance became an actionable remediation");
+            var paragraphs = ExecutiveParagraphs(document.RootElement);
+            Assert(paragraphs.Any(p => p.Contains("No currently actionable remediation group", StringComparison.Ordinal)) &&
+                paragraphs.Any(p => p.Contains("highest-risk individual finding is 'Require MFA'", StringComparison.Ordinal)) &&
+                !paragraphs.Any(p => p.Contains("first remediation priority", StringComparison.Ordinal)), "Narrative promoted a current acceptance as plan priority 1.");
+        });
         await test.Check("Reports escape active HTML and neutralize spreadsheet formulas", async () =>
         {
             using var temp = new TemporaryDirectory(); var snapshot = new DemoLab().Create(CoreTests.FixtureTime);
@@ -102,6 +218,46 @@ internal static class ReportingTests
             Equal(before, demo.Nodes[0].Label, "Provider mutated collected evidence");
             Assert(result.UsedAi && result.Inferences.Any(x => x.Contains("unverified AI interpretation")), "Provider interpretation lost its boundary.");
         });
+    }
+
+    private static EnvironmentSnapshot PrioritySnapshot()
+    {
+        var snapshot = new EnvironmentSnapshot { Id = "report-priority", Name = "Synthetic report priority fixture", Mode = EnvironmentMode.Demo,
+            CreatedAt = CoreTests.FixtureTime, UpdatedAt = CoreTests.FixtureTime };
+        snapshot.Assets.Add(new Asset { Id = "identity-asset", BusinessCriticality = 3 });
+        snapshot.Assets.Add(new Asset { Id = "patch-one", BusinessCriticality = 3 });
+        snapshot.Assets.Add(new Asset { Id = "patch-two", BusinessCriticality = 3 });
+        snapshot.Findings.Add(new Finding { Id = "individual-mfa", Title = "Require MFA", RootCauseKey = "mfa", Severity = Severity.Critical,
+            Category = SecurityCategory.Identity, AssetIds = ["identity-asset"], Confidence = 1 });
+        foreach (var id in new[] { "patch-one", "patch-two" })
+            snapshot.Findings.Add(new Finding { Id = id + "-finding", Title = "Apply the missing security update", RootCauseKey = "shared-patch",
+                Severity = Severity.High, Category = SecurityCategory.Endpoint, AssetIds = [id], Confidence = 1 });
+        return snapshot;
+    }
+
+    private static string[] ExecutiveParagraphs(JsonElement document) => ReportSection(document, "Business risk and recommended focus")
+        .GetProperty("Paragraphs").EnumerateArray().Select(p => p.GetString()!).ToArray();
+
+    private static JsonElement[] RemediationRows(JsonElement document) => ReportSection(document, "Prioritized remediation plan")
+        .GetProperty("Tables")[0].GetProperty("Rows").EnumerateArray().ToArray();
+
+    private static JsonElement ReportSection(JsonElement document, string title) => document.GetProperty("Sections")
+        .EnumerateArray().Single(s => s.GetProperty("Title").GetString() == title);
+
+    private sealed class FixtureRemediationEngine(IReadOnlyList<RemediationAction> actions) : IRemediationEngine
+    {
+        public IReadOnlyList<RemediationAction> Plan(EnvironmentSnapshot snapshot) => actions;
+    }
+
+    private sealed class FixtureRiskEngine(IReadOnlyDictionary<string, double> scores) : IRiskEngine
+    {
+        public RiskAssessment Calculate(EnvironmentSnapshot snapshot, DateTimeOffset? now = null)
+        {
+            var findings = snapshot.Findings.Select(f => new ScoredFinding(f, scores[f.Id], ["Synthetic QA numeric input"]))
+                .OrderByDescending(f => f.Risk).ThenBy(f => f.Finding.Id, StringComparer.Ordinal).ToArray();
+            return new RiskAssessment(50, findings.Sum(f => f.Risk), new Dictionary<SecurityCategory, double> { [SecurityCategory.Endpoint] = 50 },
+                findings, now ?? CoreTests.FixtureTime);
+        }
     }
 
     private static void ValidatePdf(byte[] bytes)

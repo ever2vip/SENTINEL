@@ -20,7 +20,8 @@ public sealed class AttackPathEngine : IAttackPathEngine
         var findings = snapshot.Findings.GroupBy(x => x.Id, StringComparer.Ordinal)
             .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal);
         var outgoing = snapshot.Edges.Where(x => x.EnablesPath && nodes.ContainsKey(x.SourceId) && nodes.ContainsKey(x.TargetId) &&
-                x.FindingIds.All(id => findings.TryGetValue(id, out var finding) && RiskEngine.IsActive(finding)))
+                x.FindingIds.All(id => findings.TryGetValue(id, out var finding) && RiskEngine.IsActive(finding)) &&
+                HasRelatedAssetEvidence(x))
             .GroupBy(x => x.SourceId, StringComparer.Ordinal)
             .ToDictionary(x => x.Key, x => x.OrderBy(edge => edge.Id, StringComparer.Ordinal).ToArray(), StringComparer.Ordinal);
         var paths = new List<AttackPath>();
@@ -32,6 +33,22 @@ public sealed class AttackPathEngine : IAttackPathEngine
             if (paths.Count >= MaximumPaths || expansions >= MaximumExpansions) break;
         }
         return paths.OrderByDescending(x => x.Risk).ThenBy(x => x.Id, StringComparer.Ordinal).ToList();
+
+        bool HasRelatedAssetEvidence(EvidenceEdge edge)
+        {
+            var source = nodes[edge.SourceId];
+            var target = nodes[edge.TargetId];
+            // An asset-to-asset transition cannot borrow a scoped finding from
+            // unrelated assets. Keep the stored evidence intact, including older
+            // Demo fixtures; omit unsupported inferences until scope is corrected.
+            // Identity/service relationships have their own recorded scope.
+            if (source.Kind is not (EvidenceKind.Asset or EvidenceKind.CloudResource) ||
+                target.Kind is not (EvidenceKind.Asset or EvidenceKind.CloudResource)) return true;
+            var sourceAsset = source.Properties.GetValueOrDefault("assetId", source.Id);
+            var targetAsset = target.Properties.GetValueOrDefault("assetId", target.Id);
+            return edge.FindingIds.All(id => findings[id].AssetIds.Contains(sourceAsset, StringComparer.Ordinal) ||
+                findings[id].AssetIds.Contains(targetAsset, StringComparer.Ordinal));
+        }
 
         void Walk(string currentId, List<string> route, List<EvidenceEdge> routeEdges)
         {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish only the verified V1.1 artifacts, without replacing existing assets."""
+"""Publish only the verified V1.1.1 artifacts, without replacing existing assets."""
 
 from __future__ import annotations
 
@@ -14,11 +14,12 @@ import tempfile
 import time
 from urllib.parse import quote
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 TAG = "v" + VERSION
-TITLE = "SENTINEL Enterprise V1.1"
-EXE = "SENTINEL-Enterprise-V1.1-Setup-x64.exe"
-ZIP = "SENTINEL-Enterprise-V1.1-Installer.zip"
+RELEASE_VERSION = VERSION[:-2] if VERSION.endswith(".0") else VERSION
+TITLE = "SENTINEL Enterprise V" + RELEASE_VERSION
+EXE = f"SENTINEL-Enterprise-V{RELEASE_VERSION}-Setup-x64.exe"
+ZIP = f"SENTINEL-Enterprise-V{RELEASE_VERSION}-Installer.zip"
 FILES = [EXE, ZIP, "README.txt", "SHA256SUMS.txt", "release-manifest.json",
          "verification-results.json", "desktop-verification-results.json"]
 
@@ -58,7 +59,7 @@ def find_release(repository: str) -> dict | None:
                               f"repos/{repository}/releases?per_page=100"))
     matches = [release for page in pages for release in page if release["tag_name"] == TAG]
     if len(matches) > 1:
-        raise RuntimeError("Multiple releases use v1.1.0; resolve them before publication.")
+        raise RuntimeError("Multiple releases use v1.1.1; resolve them before publication.")
     return matches[0] if matches else None
 
 
@@ -124,20 +125,33 @@ def verify_distribution(directory: Path, source: str) -> dict[str, str]:
         raise RuntimeError("Distribution checksums do not match both binaries.")
     manifest = json.loads((directory / "release-manifest.json").read_text(encoding="utf-8-sig"))
     if manifest["sourceCommit"] != source or manifest["version"] != VERSION:
-        raise RuntimeError("The manifest does not identify V1.1 and the commit built by this tag run.")
+        raise RuntimeError("The manifest does not identify V1.1.1 and the commit built by this tag run.")
     windows = json.loads((directory / "verification-results.json").read_text(encoding="utf-8-sig"))
     checks = {check["name"]: check for check in windows["checks"]}
-    required = ["silent-install", "service-boundaries", "desktop-first-launch",
-                "same-version-upgrade", "silent-uninstall", "public-v1.0-baseline-hash",
-                "public-v1.0-demo-settings-dpapi-seed", "v1.0-to-v1.1-in-place-upgrade",
-                "v1.0-data-settings-secret-and-audit-bytes-preserved",
-                "v1.1-reads-original-v1.0-demo-settings-and-dpapi",
+    if len(checks) != len(windows["checks"]):
+        raise RuntimeError("Windows verification has duplicate check names; refusing ambiguous acceptance.")
+    required = ["installer-exists", "installer-is-pe", "silent-install",
+                "service-account-and-start", "service-health", "service-boundaries",
+                "start-menu-and-uninstall", "desktop-first-launch", "same-version-upgrade", "silent-uninstall",
                 "installed-desktop-functional-and-rendered-acceptance",
-                "upgraded-silent-uninstall-preserves-evidence"]
+                "installed-desktop-keeps-upgrade-profile-unchanged",
+                "upgraded-silent-uninstall-preserves-evidence",
+                "v1.0-upgraded-silent-uninstall-preserves-evidence"]
+    for baseline in ["v1.0", "v1.1"]:
+        required.extend([f"public-{baseline}-baseline-hash", f"public-{baseline}-install",
+                         f"public-{baseline}-demo-settings-dpapi-seed",
+                         f"{baseline}-to-v{RELEASE_VERSION}-in-place-upgrade",
+                         f"{baseline}-data-settings-secret-and-audit-bytes-preserved",
+                         f"v{RELEASE_VERSION}-reads-original-{baseline}-demo-settings-and-dpapi",
+                         f"{baseline}-upgraded-service-account-and-health"])
     if any(check["status"] == "failed" for check in checks.values()):
         raise RuntimeError("Windows verification contains failing checks.")
     if any(checks.get(name, {}).get("status") != "passed" for name in required):
-        raise RuntimeError("A required installation, V1.0 upgrade or installed desktop gate did not pass.")
+        raise RuntimeError("A required installation, V1.0/V1.1 upgrade or installed desktop gate did not pass.")
+    installer = [item for item in manifest["files"] if item["path"].replace("\\", "/") == EXE]
+    if (len(installer) != 1 or installer[0]["sha256"] != expected[EXE]
+            or installer[0]["sizeBytes"] != (directory / EXE).stat().st_size):
+        raise RuntimeError("The distributed installer does not match the packaged manifest.")
     desktop = json.loads((directory / "desktop-verification-results.json").read_text(encoding="utf-8-sig"))
     if (desktop.get("status") != "passed" or desktop.get("failed") != 0
             or desktop.get("quick") is not False or len(desktop.get("renders", [])) < 360
@@ -158,19 +172,22 @@ def publish(directory: Path, repository: str, source: str) -> dict:
     while reference["type"] == "tag":
         reference = api(f"repos/{repository}/git/tags/{reference['sha']}")["object"]
     if reference["type"] != "commit" or reference["sha"] != source:
-        raise RuntimeError("The v1.1.0 tag moved after the build; refusing publication.")
+        raise RuntimeError("The v1.1.1 tag moved after the build; refusing publication.")
     notes = (
-        "SENTINEL Enterprise V1.1 — Enterprise Security Experience.\n\n"
+        "SENTINEL Enterprise V1.1.1 — reporting and evidence consistency fixes.\n\n"
+        "Executive recommendations follow the same contextual remediation ranking as the plan; "
+        "risk-reduction estimates use consistent displayed precision. Defensive attack paths require "
+        "evidence that covers the asset relationship. Existing local evidence and preferences are preserved.\n\n"
         "Self-contained unsigned Windows 10/11 x64 testing installer. Visual Studio, source code, "
         "a separately installed .NET runtime, Docker and an external database server are not required.\n\n"
         "The Release build, product and engine tests, installed WPF functional/rendered acceptance, "
-        "service/install/uninstall smoke gates, and upgrade from the original public V1.0 installer passed. "
+        "service/install/uninstall smoke gates, and upgrades from the original public V1.0 and V1.1 installers passed. "
         "The upgrade gate preserves the original evidence, settings, history, audit records and user-bound "
-        "DPAPI fixture. See attached verification results and the Actions QA artifact. Physical Windows "
+        "DPAPI fixture, plus V1.1 desktop planning/review metadata. See attached verification results and the Actions QA artifact. Physical Windows "
         "10/11 and native display scaling acceptance remain distinct manual checks.\n\n"
         "Both Release binaries and all supporting assets were downloaded by immutable asset ID and "
         "SHA-256 verified before publication. This CI build does not promise byte-for-byte reproducibility "
-        "with an earlier build. V1.0 and its release assets remain unchanged.\n"
+        "with an earlier build. V1.0 and V1.1 tags and release assets remain unchanged.\n"
     )
     release = find_release(repository)
     if release is None:
@@ -183,13 +200,13 @@ def publish(directory: Path, repository: str, source: str) -> dict:
         if not release.get("id") or release.get("tag_name") != TAG or not release.get("draft"):
             raise RuntimeError("GitHub did not return the expected draft release; refusing publication.")
     elif release["name"] != TITLE or not release["prerelease"]:
-        raise RuntimeError("An existing V1.1 release has different metadata; refusing to modify it.")
+        raise RuntimeError("An existing V1.1.1 release has different metadata; refusing to modify it.")
     release_id = release["id"]
     assets = {asset["name"]: asset for asset in release["assets"]}
     with tempfile.TemporaryDirectory() as temporary:
         downloads = Path(temporary)
         # Verify every existing asset before any upload. Never clobber differing
-        # bytes, never modify V1.0, and never move a published version's tag.
+        # bytes, never modify historical V1.0/V1.1 releases, and never move a published version's tag.
         for name in FILES:
             if name in assets:
                 destination = downloads / name
@@ -214,9 +231,9 @@ def publish(directory: Path, repository: str, source: str) -> dict:
     else:
         published = refresh(repository, release_id, set(FILES))
     if published["draft"] or not published["prerelease"] or published["tag_name"] != TAG:
-        raise RuntimeError("Release did not enter the expected published V1.1 prerelease state.")
+        raise RuntimeError("Release did not enter the expected published V1.1.1 prerelease state.")
     published_assets = {asset["name"]: asset for asset in published["assets"]}
-    lines = ["## Verified SENTINEL Enterprise V1.1 Release", "", published["html_url"], ""]
+    lines = ["## Verified SENTINEL Enterprise V1.1.1 Release", "", published["html_url"], ""]
     for name in [EXE, ZIP]:
         if name not in published_assets:
             raise RuntimeError("Published Release is missing a verified binary: " + name)
@@ -225,7 +242,7 @@ def publish(directory: Path, repository: str, source: str) -> dict:
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
             summary.write("\n".join(lines))
-    print("Release assets downloaded and SHA-256 verified; V1.1 testing prerelease published.")
+    print("Release assets downloaded and SHA-256 verified; V1.1.1 testing prerelease published.")
     print(published["html_url"])
     return published
 

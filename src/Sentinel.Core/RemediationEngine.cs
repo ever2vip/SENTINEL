@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Sentinel.Core;
 
 /// <summary>Groups shared causes into operator-reviewed actions. No action is executed by this engine.</summary>
@@ -31,13 +33,16 @@ public sealed class RemediationEngine : IRemediationEngine
             if (instructions.Count == 0) instructions.Add("Have the asset owner review the finding evidence and implement a documented defensive configuration change.");
             if (verification.Count == 0) verification.Add("Run the authorized assessment again and compare the underlying observation before marking the finding fixed.");
             var highest = findings.Max(x => x.Severity);
+            // Describe the same published values used by the desktop and report tables.
+            var publishedReduction = Math.Round(reduction, 2);
+            var publishedConfidence = Math.Round(confidence, 4);
             var why = $"Addresses {findings.Count} related {highest.ToString().ToLowerInvariant()}-or-lower finding(s) across {assetIds.Length} asset(s). " +
-                $"Approximately {reduction:F1} currently modeled risk points are associated with this cause, with {confidence:P0} evidence confidence. " +
+                $"Approximately {publishedReduction.ToString("0.0", CultureInfo.InvariantCulture)} currently modeled risk points are associated with this cause, with {publishedConfidence.ToString("P0", CultureInfo.InvariantCulture)} evidence confidence. " +
                 "This is an estimate of directly associated finding risk, not a guaranteed loss reduction; verify the fix before closing findings.";
             if (findings.Any(x => x.Status == FindingStatus.AcceptedRisk)) why += " A previous risk acceptance has expired.";
             actions.Add(new RemediationAction(AttackPathEngine.StableId("action", group.Key),
                 findings[0].Title + (assetIds.Length > 1 ? $" ({assetIds.Length} assets)" : ""), why,
-                findings.Select(x => x.Id).ToArray(), assetIds, evidenceIds, Math.Round(reduction, 2), Math.Round(confidence, 4),
+                findings.Select(x => x.Id).ToArray(), assetIds, evidenceIds, publishedReduction, publishedConfidence,
                 string.Join(Environment.NewLine, instructions), string.Join(Environment.NewLine, verification)));
         }
         return actions.OrderByDescending(x => x.ModeledRiskReduction).ThenBy(x => x.Id, StringComparer.Ordinal).ToList();

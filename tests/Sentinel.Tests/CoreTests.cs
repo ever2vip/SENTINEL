@@ -108,6 +108,49 @@ internal static class CoreTests
             Assert(paths.All(x => demo.Assets.Any(a => a.Id == x.CriticalAssetId && a.IsCritical) && x.NodeIds[0] == "internet" && x.EdgeIds.Count == x.NodeIds.Count - 1 && x.Confidence is >= 0 and <= 1 && !string.IsNullOrWhiteSpace(x.RecommendedAction)), "Invalid defensive path.");
             Assert(paths.Any(x => x.NodeIds.Contains("service-identity-01") && x.CriticalAssetId == "server-file01"), "Identity relationship was not preserved in downstream path.");
         });
+        await test.Check("Demo asset-transition evidence covers the gateway and affected privileged assets", () =>
+        {
+            var demo = new DemoLab().Create(FixtureTime);
+            var segmentation = demo.Findings.Single(f => f.Id == "finding-segmentation");
+            Assert(segmentation.AssetIds.Contains("server-vpn01") && segmentation.AssetIds.Contains("server-dc02"),
+                "Gateway reachability borrows unrelated application-tier evidence.");
+            Assert(segmentation.Description.Contains("VPN-gateway-to-NS-DC02", StringComparison.Ordinal),
+                "The gateway relationship lacks an explicit supporting observation.");
+            Assert(new AttackPathEngine().Analyze(demo).Any(p => p.EdgeIds.Contains("path-vpn-2") && p.CriticalAssetId == "server-dc02"),
+                "Corrected gateway evidence no longer supports its defensive scenario.");
+        });
+        await test.Check("Persisted legacy Demo omits unrelated path prerequisites without rewriting evidence", () =>
+        {
+            var legacy = new DemoLab().Create(FixtureTime);
+            legacy.Findings.Single(f => f.Id == "finding-segmentation").AssetIds = ["server-erp01", "server-dc01", "server-file01"];
+            var original = JsonSerializer.Serialize(legacy);
+            var paths = new AttackPathEngine().Analyze(legacy);
+            Assert(paths.All(p => !p.EdgeIds.Contains("path-vpn-2")), "An unrelated scoped finding enabled the legacy gateway path.");
+            Assert(paths.Count >= 4 && paths.Any(p => p.CriticalAssetId == "server-file01"), "Valid identity/service scenarios were discarded.");
+            Equal(original, JsonSerializer.Serialize(legacy), "Path analysis modified the persisted snapshot");
+        });
+        await test.Check("Asset-transition scope resolves graph aliases and requires a related prerequisite", () =>
+        {
+            var snapshot = new EnvironmentSnapshot
+            {
+                Assets = [new Asset { Id = "gateway" }, new Asset { Id = "critical", BusinessCriticality = 5 }],
+                Nodes = [new EvidenceNode { Id = "internet", Kind = EvidenceKind.Internet },
+                    new EvidenceNode { Id = "gateway-node", Kind = EvidenceKind.Asset, Properties = new() { ["assetId"] = "gateway" } },
+                    new EvidenceNode { Id = "critical-node", Kind = EvidenceKind.CloudResource, Properties = new() { ["assetId"] = "critical" } }],
+                Findings = [Finding("transition-finding", "unrelated")],
+                Edges = [new EvidenceEdge { Id = "entry", SourceId = "internet", TargetId = "gateway-node", EnablesPath = true },
+                    new EvidenceEdge { Id = "transition", SourceId = "gateway-node", TargetId = "critical-node", EnablesPath = true, FindingIds = ["transition-finding"] }]
+            };
+            var engine = new AttackPathEngine();
+            Equal(0, engine.Analyze(snapshot).Count, "Unrelated evidence enabled an aliased asset transition");
+            foreach (var id in new[] { "gateway", "critical" })
+            {
+                snapshot.Findings[0].AssetIds = [id];
+                Equal(1, engine.Analyze(snapshot).Count, "Related scoped evidence did not resolve its graph asset alias");
+            }
+            snapshot.Findings[0].AssetIds.Clear();
+            Equal(0, engine.Analyze(snapshot).Count, "An unscoped finding was presented as asset-transition evidence");
+        });
         await test.Check("Fixed, false-positive, or unknown prerequisites interrupt paths", () =>
         {
             foreach (var state in new[] { FindingStatus.Fixed, FindingStatus.FalsePositive })

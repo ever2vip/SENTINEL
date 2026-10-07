@@ -46,7 +46,7 @@ Unicode true
 !endif
 
 !ifndef VERSION
-  !define VERSION "1.1.0"
+  !define VERSION "1.1.1"
 !endif
 !ifndef PUBLISH_DIR
   !error "PUBLISH_DIR is required; use scripts/package.ps1 to resolve the absolute payload directory."

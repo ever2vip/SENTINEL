@@ -196,11 +196,11 @@ public sealed class DemoLab : IDemoLab
             ["network-04"], "appliance-management-tls", "Disable cleartext administrative HTTP and use validated HTTPS from the management segment.",
             "Inspect the appliance configuration and reassess the approved management ports.", ["NIST-CSF2.PR.DS-02", "CIS-v8.1-4.1"],
             "Synthetic appliance configuration has HTTP administration enabled.");
-        var segmentation = AddFinding("finding-segmentation", "Separate the application tier from privileged infrastructure", SecurityCategory.Network, Severity.High,
-            ["server-erp01", "server-dc01", "server-file01"], "tier-segmentation",
-            "Apply documented network segmentation so application servers cannot access domain-management interfaces; allow only required business flows.",
+        var segmentation = AddFinding("finding-segmentation", "Separate application and gateway tiers from privileged infrastructure", SecurityCategory.Network, Severity.High,
+            ["server-erp01", "server-dc01", "server-file01", "server-vpn01", "server-dc02"], "tier-segmentation",
+            "Apply documented network segmentation so application servers and the VPN gateway cannot access domain-management interfaces; allow only required business flows.",
             "Review the approved ACL policy and perform authorized connectivity checks for permitted and denied flows.",
-            ["NIST-CSF2.PR.IR-01", "CIS-v8.1-13.4"], "Synthetic configuration evidence permits unnecessary application-to-management network reachability.");
+            ["NIST-CSF2.PR.IR-01", "CIS-v8.1-13.4"], "Synthetic configuration evidence permits unnecessary application-to-management and VPN-gateway-to-NS-DC02 management reachability.");
         segmentation.IdentityReach = 0.8;
 
         var mfa = AddFinding("finding-admin-mfa", "Require phishing-resistant MFA for privileged identities", SecurityCategory.Identity, Severity.Critical,

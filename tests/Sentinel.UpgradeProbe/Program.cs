@@ -65,6 +65,41 @@ try
         var nodeCount = Count(persisted, "Nodes");
         if (assetCount < 262 || findingCount == 0 || nodeCount == 0)
             throw new InvalidDataException("The installed repository did not return a complete Demo Organization.");
+        string? workflowSha256 = null;
+        var hasDesktopWorkflows = infrastructure.GetName().Version is { } installedVersion && installedVersion >= new Version(1, 1);
+        if (hasDesktopWorkflows)
+        {
+            var desktop = context.LoadFromAssemblyPath(Path.Combine(desktopDirectory, "Sentinel.Desktop.dll"));
+            var storeType = desktop.GetType("Sentinel.Desktop.DesktopWorkflowStore", true)!;
+            var workflowStore = Activator.CreateInstance(storeType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                binder: null, args: [dataDirectory], culture: null)!;
+            var environmentId = (string)persisted.GetType().GetProperty("Id")!.GetValue(persisted)!;
+            await InvokeAsync(workflowStore, "LoadAsync", environmentId, CancellationToken.None);
+            if (mode == "seed")
+            {
+                var remediation = Activator.CreateInstance(core.GetType("Sentinel.Core.RemediationEngine", true)!, new object?[] { null })!;
+                var actions = (IEnumerable)remediation.GetType().GetMethod("Plan")!.Invoke(remediation, [persisted])!;
+                var action = actions.Cast<object>().First();
+                var planType = desktop.GetType("Sentinel.Desktop.RemediationPlan", true)!;
+                var plan = planType.GetMethod("FromAction", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [action, persisted])!;
+                planType.GetProperty("Status")!.SetValue(plan, "Planned");
+                planType.GetProperty("Owner")!.SetValue(plan, "Windows upgrade verification");
+                await InvokeAsync(workflowStore, "SavePlanAsync", plan, CancellationToken.None);
+                await InvokeAsync(workflowStore, "SetUnderReviewAsync", "finding-log4j", true, "Synthetic upgrade review fixture", CancellationToken.None, environmentId);
+            }
+            var plans = storeType.GetProperty("Plans", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(workflowStore)!;
+            var underReview = (bool)storeType.GetMethod("IsUnderReview", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(workflowStore, ["finding-log4j"])!;
+            var workflowFiles = Directory.Exists(Path.Combine(dataDirectory, "Workflows"))
+                ? Directory.GetFiles(Path.Combine(dataDirectory, "Workflows"), "*.json") : [];
+            if (mode == "seed" && (!underReview || !((IEnumerable)plans).Cast<object>().Any()))
+                throw new InvalidDataException("The installed V1.1 workflow fixture was not saved through the real planning store.");
+            // V1.0 had no desktop workflows. Its upgrade must remain readable with
+            // an empty store; V1.1 continuity is separately asserted by the gate.
+            workflowSha256 = Fingerprint(new { plans, underReview });
+            if (mode == "inspect" && workflowFiles.Length > 0 && (!underReview || !((IEnumerable)plans).Cast<object>().Any()))
+                throw new InvalidDataException("The original V1.1 planning and review fixture is no longer readable.");
+        }
         var result = new
         {
             schemaVersion = 1,
@@ -76,6 +111,7 @@ try
             settingsSha256 = Fingerprint(settings),
             historySha256 = Fingerprint(history),
             auditSha256 = Fingerprint(audit),
+            workflowSha256,
             assetCount,
             findingCount,
             nodeCount,
@@ -106,7 +142,7 @@ static string Fingerprint(object value)
 }
 static async Task<object?> InvokeAsync(object target, string method, params object?[] arguments)
 {
-    var task = (Task)target.GetType().GetMethod(method)!.Invoke(target, arguments)!;
+    var task = (Task)target.GetType().GetMethod(method, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!.Invoke(target, arguments)!;
     await task.ConfigureAwait(false);
     return task.GetType().GetProperty("Result")?.GetValue(task);
 }

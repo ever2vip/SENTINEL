@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.1.0',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.1.1',
     [string]$Configuration = 'Release',
     [string]$Makensis = 'makensis.exe',
     [switch]$SkipTests,

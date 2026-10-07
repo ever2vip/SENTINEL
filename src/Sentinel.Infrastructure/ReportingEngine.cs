@@ -81,7 +81,10 @@ public sealed class ReportingEngine : IReportingEngine
         var now = DateTimeOffset.UtcNow;
         var risk = _risk.Calculate(snapshot, now);
         token.ThrowIfCancellationRequested();
-        var actions = _remediation.Plan(snapshot);
+        // Use the remediation engine's deterministic priority rule for every report section,
+        // including selection of the executive top ten and its first-priority narrative.
+        var actions = _remediation.Plan(snapshot).OrderByDescending(a => a.ModeledRiskReduction)
+            .ThenBy(a => a.Id, StringComparer.Ordinal).ToArray();
         var paths = _paths.Analyze(snapshot);
         var compliance = _compliance.Assess(snapshot);
         token.ThrowIfCancellationRequested();
@@ -146,16 +149,21 @@ public sealed class ReportingEngine : IReportingEngine
         IReadOnlyList<RemediationAction> actions, IReadOnlyList<AttackPath> paths, IReadOnlyList<ComplianceResult> compliance)
     {
         AddRiskSummary(report, snapshot, risk);
+        var prioritizedActions = actions.Take(10).ToArray();
         var section = report.Section("Business risk and recommended focus");
         if (risk.RankedFindings.Count == 0)
             section.Paragraphs.Add("No active scored findings are present in this snapshot. This does not establish that all assets, identities, or controls have been assessed. Review collection coverage before making an assurance decision.");
         else
         {
-            var highest = risk.RankedFindings.OrderByDescending(f => f.Risk).First();
-            section.Paragraphs.Add($"The first priority is '{highest.Finding.Title}'. Its contextual risk is {Number(highest.Risk)} modeled risk units, with {Percent(highest.Finding.Confidence)} evidence confidence. It affects {highest.Finding.AssetIds.Distinct().Count()} recorded asset(s). Addressing the underlying cause reduces potential service disruption, unauthorized access, or data exposure according to the collected evidence; no attack has been executed.");
+            if (prioritizedActions.FirstOrDefault() is { } first)
+                section.Paragraphs.Add($"The first remediation priority is '{first.Title}' [{first.Id}], matching priority 1 in the remediation plan. This grouped action addresses {first.FindingIds.Distinct(StringComparer.Ordinal).Count()} finding(s) across {first.AssetIds.Count} recorded asset(s), with an estimated direct reduction of {Number(first.ModeledRiskReduction)} currently modeled risk units and {Percent(first.Confidence)} evidence confidence. The estimate is not a guaranteed reduction in business loss; verify the underlying observations after remediation.");
+            else
+                section.Paragraphs.Add("No currently actionable remediation group can be derived from the scored findings. Review their dispositions and any current risk acceptances; modeled risk remains present.");
+            var highest = risk.RankedFindings.OrderByDescending(f => f.Risk).ThenBy(f => f.Finding.Id, StringComparer.Ordinal).First();
+            section.Paragraphs.Add($"The highest-risk individual finding is '{highest.Finding.Title}'. Its contextual risk is {Number(highest.Risk)} modeled risk units, with {Percent(highest.Finding.Confidence)} evidence confidence. It affects {highest.Finding.AssetIds.Distinct().Count()} recorded asset(s). Individual finding risk is distinct from the grouped remediation priorities. Addressing supported causes can reduce potential service disruption, unauthorized access, or data exposure; no attack has been executed.");
             section.Paragraphs.Add($"{paths.Count} defensive path(s) connect recorded relationships to critical assets. These are evidence-based scenarios, with confidence shown for each path; a path is not proof that compromise has occurred.");
         }
-        AddActions(report, actions.Take(10).ToArray(), risk.TotalRisk);
+        AddActions(report, prioritizedActions, risk.TotalRisk);
         AddPaths(report, paths.OrderByDescending(p => p.Risk).Take(10).ToArray(), snapshot);
         AddCompliance(report, compliance, snapshot, summaryOnly: report.Kind == ReportKind.Executive);
     }
@@ -279,7 +287,7 @@ public sealed class ReportingEngine : IReportingEngine
         section.Paragraphs.Add("Risk reduction is an estimate from the current evidence model. Actions may overlap; their risk reductions must not be added as independent predictions. Reassess after each change to verify the remaining risk. Confidence describes support in the collected evidence.");
         var table = section.Table("Action ID", "Priority", "Action", "Business reason", "Affected asset IDs", "Finding IDs", "Evidence IDs", "Modeled reduction", "Share of current modeled risk", "Confidence", "Instructions", "Verification");
         var priority = 0;
-        foreach (var action in actions.OrderByDescending(a => a.ModeledRiskReduction).ThenBy(a => a.Title, StringComparer.Ordinal))
+        foreach (var action in actions)
             table.Row(action.Id, (++priority).ToString(CultureInfo.InvariantCulture), action.Title, action.Why,
                 string.Join("; ", action.AssetIds), string.Join("; ", action.FindingIds), string.Join("; ", action.EvidenceIds),
                 Number(action.ModeledRiskReduction) + " units", totalRisk > 0 ? Percent(Math.Clamp(action.ModeledRiskReduction / totalRisk, 0, 1)) + " (estimate)" : "Not applicable",

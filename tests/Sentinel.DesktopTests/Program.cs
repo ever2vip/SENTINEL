@@ -396,15 +396,34 @@ internal sealed class DesktopAcceptance(Options options)
         Assert(!Descendants(reportType).OfType<TextBlock>().Any(block => block.Text.Contains("ReportType {", StringComparison.Ordinal)),
             "The selected report type exposes a record's internal representation instead of its display title.");
         var pdf = Path.Combine(options.EvidenceDirectory, "executive-demo.pdf");
+        var executiveJson = Path.Combine(options.EvidenceDirectory, "executive-demo.json");
         var json = Path.Combine(options.EvidenceDirectory, "technical-demo.json");
         // Execute the same coordinator export used by the production button; avoid automating
         // a native SaveFileDialog or accepting input outside the isolated QA directory.
         await ProbeAsync("ExportReportForTestingAsync", "Executive", "Pdf", pdf);
+        await ProbeAsync("ExportReportForTestingAsync", "Executive", "Json", executiveJson);
         await ProbeAsync("ExportReportForTestingAsync", "Technical", "Json", json);
         Assert(File.Exists(pdf) && new FileInfo(pdf).Length > 500, "The real coordinator did not produce a PDF report.");
         Assert(System.Text.Encoding.ASCII.GetString(File.ReadAllBytes(pdf), 0, 5) == "%PDF-", "The exported report is not a PDF.");
         using var structured = JsonDocument.Parse(File.ReadAllText(json));
         Assert(structured.RootElement.ValueKind == JsonValueKind.Object, "The real structured report is not valid JSON.");
+        using var executive = JsonDocument.Parse(File.ReadAllText(executiveJson));
+        var sections = executive.RootElement.GetProperty("Sections").EnumerateArray().ToArray();
+        var rows = sections.Single(section => section.GetProperty("Title").GetString() == "Prioritized remediation plan")
+            .GetProperty("Tables")[0].GetProperty("Rows").EnumerateArray().ToArray();
+        Assert(rows.Length > 0, "The installed Demo report has no remediation plan.");
+        var first = rows[0];
+        var recommendation = $"The first remediation priority is '{first[2].GetString()}' [{first[0].GetString()}]";
+        var paragraphs = sections.Single(section => section.GetProperty("Title").GetString() == "Business risk and recommended focus")
+            .GetProperty("Paragraphs").EnumerateArray().Select(paragraph => paragraph.GetString()!).ToArray();
+        Assert(paragraphs.Any(paragraph => paragraph.Contains(recommendation, StringComparison.Ordinal)),
+            "The actual installed report contradicts its own first remediation priority.");
+        foreach (var row in rows)
+        {
+            var reduction = row[7].GetString()!.Replace(" units", "", StringComparison.Ordinal);
+            Assert(row[3].GetString()!.Contains("Approximately " + reduction + " currently modeled risk points", StringComparison.Ordinal),
+                "The installed report's business reason and displayed modeled reduction use different rounding.");
+        }
         await CaptureInteraction("Report-Studio-preview", "Dark");
     });
 
@@ -997,7 +1016,7 @@ internal sealed class DesktopAcceptance(Options options)
         Directory.CreateDirectory(options.EvidenceDirectory);
         var result = new
         {
-            product = "SENTINEL Enterprise V1.1",
+            product = "SENTINEL Enterprise V" + _desktopAssembly.GetName().Version?.ToString(3),
             status = Failed ? "failed" : "passed",
             atUtc = DateTimeOffset.UtcNow,
             elapsedMilliseconds = _elapsed.ElapsedMilliseconds,
@@ -1022,7 +1041,7 @@ internal sealed class DesktopAcceptance(Options options)
         };
         File.WriteAllText(Path.Combine(options.EvidenceDirectory, "verification-results.json"), JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
         File.WriteAllText(Path.Combine(options.EvidenceDirectory, "README.txt"),
-            "SENTINEL Enterprise V1.1 real installed-assembly WPF acceptance evidence.\n" +
+            "SENTINEL Enterprise V" + _desktopAssembly.GetName().Version?.ToString(3) + " real installed-assembly WPF acceptance evidence.\n" +
             "Inspect the screenshots beside verification-results.json. Every image was rendered from production WPF controls using real offline Demo evidence.\n" +
             "The effective scaling matrix simulates logical viewport sizing and pixel density; nativeWindowDpi records the actual host window DPI separately.\n" +
             "A passed automated geometry check does not replace visual inspection of PNGs or physical-monitor acceptance.\n");

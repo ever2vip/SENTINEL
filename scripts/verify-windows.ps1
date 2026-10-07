@@ -2,9 +2,11 @@
 param(
     [Parameter(Mandatory)][string]$SetupPath,
     [string]$EvidenceDirectory = (Join-Path $PSScriptRoot '..\artifacts\windows-verification'),
-    [string]$ExpectedVersion = '1.1.0',
+    [string]$ExpectedVersion = '1.1.1',
     [string]$BaselineSetupPath,
     [string]$BaselineSetupSha256 = '13b2d877223657b604c7607179afe91b151d8331308ddc8f299378da50b64ad2',
+    [string]$V11BaselineSetupPath,
+    [string]$V11BaselineSetupSha256 = '54ff434a684523c2f6a454e7aa4c7764893eb47cad3596f577a27510a37aab52',
     [string]$UpgradeProbePath,
     [string]$DesktopAcceptanceScript,
     [switch]$InstallUninstall,
@@ -15,7 +17,7 @@ Set-StrictMode -Version Latest
 if (-not $IsWindows) { throw 'This verification script requires Windows PowerShell 7 or later on Windows x64.' }
 $SetupPath = [IO.Path]::GetFullPath($SetupPath)
 $EvidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
-foreach ($pathParameter in @('BaselineSetupPath', 'UpgradeProbePath', 'DesktopAcceptanceScript')) {
+foreach ($pathParameter in @('BaselineSetupPath', 'V11BaselineSetupPath', 'UpgradeProbePath', 'DesktopAcceptanceScript')) {
     $value = Get-Variable -Name $pathParameter -ValueOnly
     if ($value) {
         $resolved = [IO.Path]::GetFullPath($value)
@@ -24,8 +26,13 @@ foreach ($pathParameter in @('BaselineSetupPath', 'UpgradeProbePath', 'DesktopAc
         Set-Variable -Name $pathParameter -Value $resolved
     }
 }
-if ($BaselineSetupPath -and (-not $InstallUninstall -or -not $UpgradeProbePath)) {
-    throw 'V1.0 upgrade verification requires -InstallUninstall and the published -UpgradeProbePath.'
+$baselines = @()
+if ($BaselineSetupPath) { $baselines += [ordered]@{ version = '1.0.0'; label = 'v1.0'; setup = $BaselineSetupPath; sha256 = $BaselineSetupSha256 } }
+if ($V11BaselineSetupPath) { $baselines += [ordered]@{ version = '1.1.0'; label = 'v1.1'; setup = $V11BaselineSetupPath; sha256 = $V11BaselineSetupSha256 } }
+$hasBaselines = $baselines.Count -gt 0
+$targetLabel = 'v' + $(if ($ExpectedVersion.EndsWith('.0')) { $ExpectedVersion.Substring(0, $ExpectedVersion.Length - 2) } else { $ExpectedVersion })
+if ($hasBaselines -and (-not $InstallUninstall -or -not $UpgradeProbePath)) {
+    throw 'Historical upgrade verification requires -InstallUninstall and the published -UpgradeProbePath.'
 }
 New-Item -ItemType Directory -Path $EvidenceDirectory -Force | Out-Null
 $checks = [Collections.Generic.List[object]]::new()
@@ -77,7 +84,7 @@ try {
         if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Install/uninstall verification requires an elevated disposable Windows VM.' }
         if (Get-Service -Name SentinelMaintenance -ErrorAction SilentlyContinue) { throw 'Use a clean disposable VM: SENTINEL is already installed.' }
         if (Test-Path -LiteralPath $installDirectory) { throw 'Use a clean disposable VM: the SENTINEL installation directory already exists.' }
-        if ($BaselineSetupPath -and (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Sentinel'))) { throw 'Actual V1.0 upgrade QA requires a clean disposable operator profile; SENTINEL user data already exists.' }
+        if ($hasBaselines -and (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Sentinel'))) { throw 'Historical upgrade QA requires a clean disposable operator profile; SENTINEL user data already exists.' }
         Check 'silent-install' { Run-Installer $SetupPath @('/S'); Assert-InstalledVersion $ExpectedVersion }
         Check 'service-account-and-start' {
             $service = Get-CimInstance Win32_Service -Filter "Name='SentinelMaintenance'"
@@ -141,77 +148,96 @@ try {
             Remove-Item -LiteralPath $installDirectory -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $marker -Force
         }
-        if ($BaselineSetupPath) {
-            # This profile was asserted clean before the fresh-install gate above.
-            # Remove only QA-created data so genuine V1.0 binaries can create their
-            # own database, Demo Organization, preferences and DPAPI fixture.
+        for ($baselineIndex = 0; $baselineIndex -lt $baselines.Count; $baselineIndex++) {
+            $baselineInstaller = $baselines[$baselineIndex]
+            $baselineLabel = $baselineInstaller.label
+            # The operator profile was asserted clean before any test. Only data
+            # created by the preceding disposable QA case is removed between cases.
+            # Each uninstall first proves byte preservation; no operator database is reset to pass.
             if (Test-Path -LiteralPath $sentinel) { Remove-Item -LiteralPath $sentinel -Recurse -Force }
-            Check 'public-v1.0-baseline-hash' {
-                $hash = (Get-FileHash -LiteralPath $BaselineSetupPath -Algorithm SHA256).Hash.ToLowerInvariant()
-                if ($hash -ne $BaselineSetupSha256) { throw "Public V1.0 installer checksum mismatch: $hash" }
-                Write-Host "Verified historical V1.0 installer SHA-256: $hash"
+            Check "public-$baselineLabel-baseline-hash" {
+                $hash = (Get-FileHash -LiteralPath $baselineInstaller.setup -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($hash -ne $baselineInstaller.sha256) { throw "Public $baselineLabel installer checksum mismatch: $hash" }
+                Write-Host "Verified historical $baselineLabel installer SHA-256: $hash"
             }
-            # A custom directory with spaces verifies that V1.1 resolves the
-            # existing x64 registry location instead of assuming its default.
-            $installDirectory = Join-Path $env:ProgramFiles 'SENTINEL V1.0 Upgrade QA'
+            # Preserve a genuine custom x64 installation directory with spaces.
+            $installDirectory = Join-Path $env:ProgramFiles "SENTINEL $baselineLabel Upgrade QA"
             if (Test-Path -LiteralPath $installDirectory) { throw "The disposable upgrade directory already exists: $installDirectory" }
-            Check 'public-v1.0-install' { Run-Installer $BaselineSetupPath @('/S', "/D=$installDirectory"); Assert-InstalledVersion '1.0.0'; Wait-Health | Out-Null }
-            $baselineResult = Join-Path $EvidenceDirectory 'v1.0-installed-evidence.json'
-            Check 'public-v1.0-demo-settings-dpapi-seed' {
+            Check "public-$baselineLabel-install" { Run-Installer $baselineInstaller.setup @('/S', "/D=$installDirectory"); Assert-InstalledVersion $baselineInstaller.version; Wait-Health | Out-Null }
+            $baselineResult = Join-Path $EvidenceDirectory "$baselineLabel-installed-evidence.json"
+            Check "public-$baselineLabel-demo-settings-dpapi-seed" {
                 Run-UpgradeProbe 'seed' $baselineResult
                 $result = Get-Content -LiteralPath $baselineResult -Raw | ConvertFrom-Json
-                if ($result.infrastructureVersion -ne '1.0.0.0') { throw 'The upgrade baseline was not seeded by the installed V1.0 binaries.' }
+                if ($result.infrastructureVersion -ne "$($baselineInstaller.version).0") { throw "The upgrade baseline was not seeded by the installed $baselineLabel binaries." }
+                if ($baselineLabel -eq 'v1.1' -and -not $result.workflowSha256) { throw 'The genuine V1.1 baseline did not seed its desktop workflow metadata.' }
             }
             $maintenanceSettings = Join-Path $env:ProgramData 'Sentinel\maintenance-settings.json'
             Set-Content -LiteralPath $maintenanceSettings -Value '{"enableServiceLogRetention":false,"serviceLogRetentionDays":47}' -Encoding utf8
             $auditMarker = Join-Path $env:ProgramData 'Sentinel\ServiceLogs\qa-upgrade-preserved.jsonl'
             Set-Content -LiteralPath $auditMarker -Value '{"event":"synthetic upgrade preservation fixture"}' -Encoding utf8
             $continuityFiles = @($maintenanceSettings, $auditMarker) + @(Get-ChildItem -LiteralPath $sentinel -File -Filter 'sentinel.db*' | ForEach-Object FullName) + @(Get-ChildItem -LiteralPath (Join-Path $sentinel 'secrets') -File | ForEach-Object FullName)
+            $workflowDirectory = Join-Path $sentinel 'Workflows'
+            if (Test-Path -LiteralPath $workflowDirectory) { $continuityFiles += @(Get-ChildItem -LiteralPath $workflowDirectory -File -Recurse | ForEach-Object FullName) }
             $before = @($continuityFiles | ForEach-Object { [ordered]@{ path = $_; sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant() } })
-            $before | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'upgrade-preserved-files.json') -Encoding utf8
-            Check 'v1.0-to-v1.1-in-place-upgrade' {
+            $before | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory "$baselineLabel-upgrade-preserved-files.json") -Encoding utf8
+            Check "$baselineLabel-to-$targetLabel-in-place-upgrade" {
                 Run-Installer $SetupPath @('/S'); Assert-InstalledVersion $ExpectedVersion; Wait-Health | Out-Null
                 $registeredPath = Get-ItemPropertyValue -LiteralPath 'HKLM:\SOFTWARE\SENTINEL' -Name InstallDir
                 if ($registeredPath -ne $installDirectory) { throw 'Upgrade changed the existing custom installation directory.' }
                 if (Test-Path -LiteralPath (Join-Path $env:ProgramFiles 'SENTINEL\Desktop\Sentinel.Desktop.exe')) { throw 'Upgrade unexpectedly created a second installation at the default path.' }
             }
-            Check 'v1.0-data-settings-secret-and-audit-bytes-preserved' {
+            Check "$baselineLabel-data-settings-secret-and-audit-bytes-preserved" {
                 foreach ($file in $before) {
                     if (-not (Test-Path -LiteralPath $file.path -PathType Leaf)) { throw "Upgrade removed preserved operator/service data: $($file.path)" }
                     if ((Get-FileHash -LiteralPath $file.path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $file.sha256) { throw "Upgrade changed preserved operator/service data: $($file.path)" }
                 }
             }
-            Check 'v1.1-reads-original-v1.0-demo-settings-and-dpapi' {
-                $upgradedResult = Join-Path $EvidenceDirectory 'v1.1-upgraded-evidence.json'
+            Check "$targetLabel-reads-original-$baselineLabel-demo-settings-and-dpapi" {
+                $upgradedResult = Join-Path $EvidenceDirectory "$baselineLabel-to-$targetLabel-upgraded-evidence.json"
                 Run-UpgradeProbe 'inspect' $upgradedResult
                 $baseline = Get-Content -LiteralPath $baselineResult -Raw | ConvertFrom-Json
                 $upgraded = Get-Content -LiteralPath $upgradedResult -Raw | ConvertFrom-Json
-                if ($upgraded.infrastructureVersion -ne "$ExpectedVersion.0") { throw 'Evidence was not read by the upgraded installed V1.1 binaries.' }
-                foreach ($property in @('snapshotSha256', 'settingsSha256', 'historySha256', 'auditSha256', 'assetCount', 'findingCount', 'nodeCount', 'theme', 'retentionDays', 'dpapiContinuity')) {
-                    if ($baseline.$property -ne $upgraded.$property) { throw "V1.0 to V1.1 continuity mismatch: $property" }
+                if ($upgraded.infrastructureVersion -ne "$ExpectedVersion.0") { throw "Evidence was not read by the upgraded installed $targetLabel binaries." }
+                $semanticProperties = @('snapshotSha256', 'settingsSha256', 'historySha256', 'auditSha256', 'assetCount', 'findingCount', 'nodeCount', 'theme', 'retentionDays', 'dpapiContinuity')
+                if ($baselineLabel -eq 'v1.1') { $semanticProperties += 'workflowSha256' }
+                foreach ($property in $semanticProperties) {
+                    if ($baseline.$property -ne $upgraded.$property) { throw "$baselineLabel to $targetLabel continuity mismatch: $property" }
                 }
             }
-            Check 'upgraded-service-account-and-health' {
+            Check "$baselineLabel-upgraded-service-account-and-health" {
                 $service = Get-CimInstance Win32_Service -Filter "Name='SentinelMaintenance'"
                 if (-not $service -or $service.StartName -ne 'NT AUTHORITY\LocalService' -or $service.State -ne 'Running') { throw 'The upgraded maintenance service did not retain its least-privilege identity.' }
                 Wait-Health | Out-Null
             }
-            # Repository reads may legitimately checkpoint SQLite's WAL. Freeze
-            # the current bytes again after semantic compatibility/decryption is
-            # verified so uninstall is assessed against the actual latest state.
+            # SQLite reads can checkpoint WAL. Freeze the latest bytes after
+            # semantic compatibility and decryption, before uninstall/UI QA.
             $afterReadFiles = @($maintenanceSettings, $auditMarker) + @(Get-ChildItem -LiteralPath $sentinel -File -Filter 'sentinel.db*' | ForEach-Object FullName) + @(Get-ChildItem -LiteralPath (Join-Path $sentinel 'secrets') -File | ForEach-Object FullName)
+            if (Test-Path -LiteralPath $workflowDirectory) { $afterReadFiles += @(Get-ChildItem -LiteralPath $workflowDirectory -File -Recurse | ForEach-Object FullName) }
             $afterRead = @($afterReadFiles | ForEach-Object { [ordered]@{ path = $_; sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant() } })
-            $afterRead | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'uninstall-preserved-files.json') -Encoding utf8
+            $afterRead | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory "$baselineLabel-uninstall-preserved-files.json") -Encoding utf8
+            if ($baselineIndex -lt $baselines.Count - 1) {
+                Check "$baselineLabel-upgraded-silent-uninstall-preserves-evidence" {
+                    Run-Installer (Join-Path $installDirectory 'Uninstall.exe') @('/S', "_?=$installDirectory")
+                    if (Get-Service -Name SentinelMaintenance -ErrorAction SilentlyContinue) { throw 'Upgraded service registration remains after uninstall.' }
+                    if (Test-Path -LiteralPath (Join-Path $installDirectory 'Desktop\Sentinel.Desktop.exe')) { throw 'Upgraded desktop executable remains after uninstall.' }
+                    foreach ($file in $afterRead) {
+                        if (-not (Test-Path -LiteralPath $file.path -PathType Leaf)) { throw "Uninstall removed preserved upgrade data: $($file.path)" }
+                        if ((Get-FileHash -LiteralPath $file.path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $file.sha256) { throw "Uninstall changed preserved upgrade data: $($file.path)" }
+                    }
+                    Remove-Item -LiteralPath (Join-Path $installDirectory 'Uninstall.exe') -Force -ErrorAction SilentlyContinue
+                    Remove-Item -LiteralPath $installDirectory -Force -ErrorAction SilentlyContinue
+                }
+            }
         }
         if ($DesktopAcceptanceScript) {
             # The acceptance executable loads actual installed WPF assemblies,
             # using isolated QA data so the upgrade-continuity fixture is untouched.
-            if (-not $BaselineSetupPath) { Run-Installer $SetupPath @('/S'); Assert-InstalledVersion $ExpectedVersion }
+            if (-not $hasBaselines) { Run-Installer $SetupPath @('/S'); Assert-InstalledVersion $ExpectedVersion }
             Check 'installed-desktop-functional-and-rendered-acceptance' {
                 & $DesktopAcceptanceScript -DesktopDirectory (Join-Path $installDirectory 'Desktop') -EvidenceDirectory (Join-Path $EvidenceDirectory 'desktop')
                 if ($LASTEXITCODE -ne 0) { throw "Installed desktop acceptance failed with exit code $LASTEXITCODE." }
             }
-            if ($BaselineSetupPath) {
+            if ($hasBaselines) {
                 Check 'installed-desktop-keeps-upgrade-profile-unchanged' {
                     foreach ($file in $afterRead) {
                         if (-not (Test-Path -LiteralPath $file.path -PathType Leaf)) { throw "Desktop acceptance removed data outside its isolated profile: $($file.path)" }
@@ -220,12 +246,12 @@ try {
                 }
             }
         }
-        if ($BaselineSetupPath -or $DesktopAcceptanceScript) {
+        if ($hasBaselines -or $DesktopAcceptanceScript) {
             Check 'upgraded-silent-uninstall-preserves-evidence' {
                 Run-Installer (Join-Path $installDirectory 'Uninstall.exe') @('/S', "_?=$installDirectory")
                 if (Get-Service -Name SentinelMaintenance -ErrorAction SilentlyContinue) { throw 'Upgraded service registration remains after uninstall.' }
                 if (Test-Path -LiteralPath (Join-Path $installDirectory 'Desktop\Sentinel.Desktop.exe')) { throw 'Upgraded desktop executable remains after uninstall.' }
-                if ($BaselineSetupPath) {
+                if ($hasBaselines) {
                     foreach ($file in $afterRead) {
                         if (-not (Test-Path -LiteralPath $file.path -PathType Leaf)) { throw "Uninstall removed preserved upgrade data: $($file.path)" }
                         if ((Get-FileHash -LiteralPath $file.path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $file.sha256) { throw "Uninstall changed preserved upgrade data: $($file.path)" }
