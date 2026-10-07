@@ -655,7 +655,14 @@ internal sealed class DesktopAcceptance(Options options)
         if (_renderSource is null)
         {
             _window.Content = null;
+            // Application resource-change notifications normally traverse its
+            // Windows. Keep the detached production tree an owner of the same
+            // dictionary so live theme changes invalidate every existing shell
+            // resource reference, rather than only newly created page content.
+            _root.Resources.MergedDictionaries.Add(Application.Current.Resources);
             _root.SetResourceReference(System.Windows.Documents.TextElement.ForegroundProperty, "TextBrush");
+            _root.SetResourceReference(System.Windows.Documents.TextElement.FontFamilyProperty, "UiFontFamily");
+            _root.SetResourceReference(System.Windows.Documents.TextElement.FontSizeProperty, "BodyFontSize");
             _renderSource = new HwndSource(new HwndSourceParameters("SENTINEL rendering acceptance")
             {
                 PositionX = -16000, PositionY = -16000,
@@ -685,6 +692,7 @@ internal sealed class DesktopAcceptance(Options options)
         _renderSource.RootVisual = null;
         _renderSource.Dispose();
         _renderSource = null;
+        _root.Resources.MergedDictionaries.Remove(Application.Current.Resources);
         _root.Width = _root.Height = double.NaN;
         if (_window.Content is null) _window.Content = _root;
     }
@@ -717,7 +725,10 @@ internal sealed class DesktopAcceptance(Options options)
         {
             colors.Add(BitConverter.ToInt32(pixels, index));
             samples++;
-            if (pixels[index + 3] < 255) transparentSamples++;
+            // WPF text compositing rounds some opaque pixels to alpha 254.
+            // Detect unpainted/transparent regions without treating that one-byte
+            // antialiasing roundoff as a missing section of the visual tree.
+            if (pixels[index + 3] < 250) transparentSamples++;
         }
         if (colors.Count < 8) errors.Add("The actual rendered screenshot is blank or lacks meaningful page content.");
         if (transparentSamples > samples / 1000)
