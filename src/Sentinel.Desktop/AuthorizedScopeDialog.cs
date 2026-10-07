@@ -54,7 +54,9 @@ internal sealed class AuthorizedScopeDialog : Window
         }, true);
         var cancel = Ui.Button("Cancel", () => DialogResult = false);
         var panel = Ui.Stack(Ui.Text("Define the boundary. Record authorization.", 26, bold: true), Ui.Text("The assessment contacts only the exact targets below using the selected defensive engine. No autonomous discovery, credentials, exploitation, or remediation execution is enabled.", 14, "MutedBrush"), Ui.Text("Assessment engine", 14, bold: true), engine, description, Ui.Text("Exact hosts / IP addresses / email domains · one per line", 14, bold: true), hosts, Ui.Text("Authorized web URLs · one per line", 14, bold: true), urls, Ui.Toolbar(Ui.Stack(Ui.Text("Authorized TCP ports", 12, "MutedBrush"), ports), Ui.Stack(Ui.Text("Timeout seconds", 12, "MutedBrush"), timeout)), local, Ui.Text("Authorizing operator", 14, bold: true), operatorName, authorized, Ui.Text("The saved audit entry records engine, exact scope, operator, time, and event ID. You can cancel safely at any time. Scope validation may reject malformed or unavailable targets before contact.", 12, "MutedBrush"), error, Ui.Toolbar(start, cancel));
-        Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(28) };
+        var content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(28) };
+        content.SetResourceReference(Control.BackgroundProperty, "BackgroundBrush");
+        Content = content;
     }
 
     private static List<string> SplitLines(string text) => text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
