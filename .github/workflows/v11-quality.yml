@@ -1,0 +1,33 @@
+name: SENTINEL V1.1 quality
+on:
+  push:
+    branches: ['v1.1-development']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sentinel-v11-quality-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  baseline:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v1.0.0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.401'
+      - name: Build accepted V1.0 baseline
+        shell: pwsh
+        run: |
+          dotnet build Sentinel.sln -c Release
+          if ($LASTEXITCODE -ne 0) { throw 'V1.0 baseline build failed.' }
+      - name: Run accepted V1.0 product and engine suites
+        shell: pwsh
+        run: |
+          dotnet run --project tests/Sentinel.Tests/Sentinel.Tests.csproj -c Release --no-build
+          if ($LASTEXITCODE -ne 0) { throw 'V1.0 baseline product tests failed.' }
+          dotnet run --project tests/Sentinel.EngineTests/Sentinel.EngineTests.csproj -c Release --no-build
+          if ($LASTEXITCODE -ne 0) { throw 'V1.0 baseline engine tests failed.' }
