@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: sentinel-v1-release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.ref == 'refs/heads/v1.1-development' }}
 
 jobs:
   windows-release-gate:

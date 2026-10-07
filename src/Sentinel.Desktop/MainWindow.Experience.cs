@@ -186,7 +186,7 @@ public partial class MainWindow
     private void RenderCompliance()
     {
         var results = _coordinator.Compliance;
-        PageContent.Children.Add(Ui.Columns(Ui.Metric("MAPPED CONTROLS", results.Count.ToString(), "NIST CSF 2.0 + CIS Controls"), Ui.Metric("WITH FINDINGS", results.Count(c => c.FindingIds.Count > 0).ToString(), "Evidence requiring review", "HighBrush"), Ui.Metric("UNASSESSED", results.Count(c => c.Status.Contains("unassessed", StringComparison.OrdinalIgnoreCase)).ToString(), "No compliance claim")));
+        PageContent.Children.Add(Ui.Columns(Ui.Metric("MAPPED CONTROLS", results.Count.ToString(), "NIST CSF 2.0 + CIS Controls"), Ui.Metric("WITH FINDINGS", results.Count(c => c.FindingIds.Count > 0).ToString(), "Evidence requiring review", "HighBrush"), Ui.Metric("UNASSESSED", results.Count(c => c.Status.Equals("Not assessed", StringComparison.OrdinalIgnoreCase)).ToString(), "No compliance claim")));
         var framework = Ui.Select(new[] { "All frameworks" }.Concat(results.Select(c => c.Control.Framework).Distinct()), "All frameworks");
         var search = Ui.Search("Search controls");
         var rows = results.Select(c => new { c.Control.Id, c.Control.Framework, c.Control.Title, c.Status, Findings = c.FindingIds.Count }).ToList();
