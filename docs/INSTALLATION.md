@@ -70,7 +70,10 @@ The GitHub Actions workflow builds on Windows, packages, runs elevated
 install/service/upgrade/uninstall checks and installed WPF acceptance, and stores
 artifacts plus verification evidence. Manual workflow dispatch produces Actions
 artifacts only. A `v1.1.0` tag run publishes a verified testing prerelease after
-all gates pass; it never modifies the historical `v1.0.0` release.
+all gates pass. The reviewed `v1.1-release` branch can also repeat the full gate
+and create the absent tag on its exact validated commit before publication;
+an existing different tag is rejected. The release process
+never modifies the historical `v1.0.0` release.
 
 ## Windows release acceptance gate
 

@@ -231,6 +231,8 @@ jobs:
         with:
           name: SENTINEL-Enterprise-V1.1-Visual-Preview
           path: |
+            artifacts/windows-verification/verification-results.json
+            artifacts/windows-verification/desktop/verification-results.json
             artifacts/windows-verification/desktop/screenshots/*-1366x768-effective-100pct.png
             artifacts/windows-verification/desktop/screenshots/*-selected.png
             artifacts/windows-verification/desktop/screenshots/*-breakpoint.png

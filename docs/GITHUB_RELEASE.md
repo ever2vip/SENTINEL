@@ -30,6 +30,10 @@ Failed checks are retained in the separate **SENTINEL-Enterprise-V1.1-QA** artif
 ## Publish the V1.1 release
 
 Push the `v1.1.0` tag to the source commit to start the release workflow.
+Alternatively, promote the reviewed commit to the `v1.1-release` branch. Its
+complete Windows gate runs first, then the publication job creates `v1.1.0`
+only if absent or already identifying that exact validated commit. A differing
+tag fails closed. No tag or historical release is moved by this process.
 After all Windows gates succeed, the publication job creates
 **SENTINEL Enterprise V1.1**, uploads both binaries, downloads the assets again,
 and verifies their SHA-256 hashes before publishing the testing prerelease.
