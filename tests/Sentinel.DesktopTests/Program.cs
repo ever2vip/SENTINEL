@@ -129,9 +129,11 @@ internal sealed class DesktopAcceptance(Options options)
         _desktopAssembly = AssemblyLoadContext.Default.LoadFromAssemblyPath(assemblyPath);
         var appType = _desktopAssembly.GetType("Sentinel.Desktop.App", throwOnError: true)!;
         var application = (Application)Activator.CreateInstance(appType)!;
+        appType.GetProperty("SuppressOperatorStartupForTesting", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(application, true);
         appType.GetMethod("InitializeComponent", BindingFlags.Public | BindingFlags.Instance)!.Invoke(application, null);
-        // Dispatcher.Run below intentionally avoids App.OnStartup creating an operator-profile
-        // window. The tested MainWindow is the production class with an isolated profile.
+        // The real Application resources are loaded, while its explicitly suppressed
+        // operator-window startup leaves only the production isolated-profile window.
         Console.WriteLine($"Desktop assembly: {assemblyPath}");
         Console.WriteLine($"Desktop assembly SHA-256: {_assemblyHash}");
         Console.WriteLine($"Isolated operator profile: {_profileDirectory}");
@@ -147,6 +149,8 @@ internal sealed class DesktopAcceptance(Options options)
         await Check("first-launch-initializes-SQLite-and-workspace-selector", async () =>
         {
             await ProbeAsync("WaitForTestingReadyAsync");
+            Assert(Application.Current.Windows.Count == 1 && Application.Current.Windows[0] == _window,
+                "Desktop acceptance opened an unexpected window outside its isolated profile.");
             Assert(!ProbeProperty<bool>("HasEnvironmentForTesting"), "An isolated first launch must offer a workspace choice before loading evidence.");
             Assert(AllText().Contains("Demo", StringComparison.OrdinalIgnoreCase) && AllText().Contains("Live", StringComparison.OrdinalIgnoreCase), "First launch does not expose both Demo and Live choices.");
             Assert(File.Exists(Path.Combine(_profileDirectory, "sentinel.db")), "First launch did not physically create the SQLite database.");

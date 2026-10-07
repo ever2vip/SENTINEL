@@ -211,6 +211,14 @@ try {
                 & $DesktopAcceptanceScript -DesktopDirectory (Join-Path $installDirectory 'Desktop') -EvidenceDirectory (Join-Path $EvidenceDirectory 'desktop')
                 if ($LASTEXITCODE -ne 0) { throw "Installed desktop acceptance failed with exit code $LASTEXITCODE." }
             }
+            if ($BaselineSetupPath) {
+                Check 'installed-desktop-keeps-upgrade-profile-unchanged' {
+                    foreach ($file in $afterRead) {
+                        if (-not (Test-Path -LiteralPath $file.path -PathType Leaf)) { throw "Desktop acceptance removed data outside its isolated profile: $($file.path)" }
+                        if ((Get-FileHash -LiteralPath $file.path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $file.sha256) { throw "Desktop acceptance changed data outside its isolated profile: $($file.path)" }
+                    }
+                }
+            }
         }
         if ($BaselineSetupPath -or $DesktopAcceptanceScript) {
             Check 'upgraded-silent-uninstall-preserves-evidence' {
